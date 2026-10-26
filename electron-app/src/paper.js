@@ -1,0 +1,250 @@
+// 论文元数据匹配：arXiv API 优先，其次 OpenAlex（DOI），最后 Crossref（标题）。
+// 全部免费公开接口；任一失败返回 null（推送条目照常保存，只是少配对论文条目）。
+const UNWANTED = /<[^>]+>/g;
+
+// 全名 → Zotero 创建者：西方名拆双字段（末词为姓，van/von/de 等小品词并入姓）；
+// 无拉丁字母的姓名（中文等）保持单字段。
+const NAME_PARTICLES = /^(van|von|de|der|den|di|da|du|del|la|le)$/i;
+function toCreators(names) {
+  return names.slice(0, 20).map((raw) => {
+    const name = String(raw || '').replace(/\s+/g, ' ').trim();
+    if (!name) return null;
+    if (!/[A-Za-z]/.test(name)) return { creatorType: 'author', name, fieldMode: 1 };
+    const parts = name.split(' ');
+    if (parts.length === 1) return { creatorType: 'author', name, fieldMode: 1 };
+    let i = parts.length - 1;
+    while (i > 0 && NAME_PARTICLES.test(parts[i - 1])) i--;
+    return {
+      creatorType: 'author',
+      firstName: parts.slice(0, i).join(' '),
+      lastName: parts.slice(i).join(' '),
+    };
+  }).filter(Boolean);
+}
+
+function unesc(s) {
+  return String(s || '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').trim();
+}
+
+const ARXIV_ID_RE = /arxiv\.org\/(?:abs|pdf)\/([0-9]{4}\.[0-9]{4,5}(?:v\d+)?|[a-z\-]+(?:\.[A-Z]{2})?\/\d{7})/i;
+const DOI_IN_URL_RE = /doi\.org\/(10\.\d{4,9}\/[^\s?#"'<>]+)/i;
+
+function arxivIdFromUrl(url) {
+  const m = (url || '').match(ARXIV_ID_RE);
+  return m ? m[1].replace(/v\d+$/i, '') : null;
+}
+
+function doiFromUrl(url) {
+  const m = (url || '').match(DOI_IN_URL_RE);
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]).toLowerCase();
+  } catch {
+    return m[1].toLowerCase();
+  }
+}
+
+// 出版商页面通常内嵌 Highwire citation meta（nature/wiley/springer/mdpi/plos 等通用）
+async function pageCitationMeta(url) {
+  const r = await _get(url);
+  if (!r) return null;
+  const h = await r.text();
+  const meta = (name) => {
+    const m = h.match(new RegExp('<meta[^>]+(?:name|property)="' + name + '"[^>]+content="([^"]*)"', 'i'))
+           || h.match(new RegExp('<meta[^>]+content="([^"]*)"[^>]+(?:name|property)="' + name + '"', 'i'));
+    return m ? unesc(m[1]) : '';
+  };
+  const authors = [...h.matchAll(/<meta[^>]+(?:name|property)="citation_author"[^>]+content="([^"]*)"/gi)]
+    .map((m) => unesc(m[1])).slice(0, 20);
+  return {
+    doi: (meta('citation_doi') || meta('citation_DOI') || '').toLowerCase(),
+    title: meta('citation_title') || unesc((h.match(/<title>([\s\S]*?)<\/title>/i) || [])[1] || '').split('|')[0],
+    authors,
+    journal: meta('citation_journal_title'),
+    date: meta('citation_publication_date') || meta('citation_date'),
+    abstract: meta('citation_abstract') || meta('og:description') || meta('description'),
+  };
+}
+
+// OpenAlex 的摘要倒排索引还原成文本（分类时用）
+function abstractFromInverted(inv) {
+  if (!inv) return '';
+  try {
+    const pos = [];
+    for (const [word, idxs] of Object.entries(inv)) {
+      for (const i of idxs) pos[i] = word;
+    }
+    return pos.filter(Boolean).join(' ');
+  } catch {
+    return '';
+  }
+}
+async function _get(url, params) {
+  const qs = params ? '?' + new URLSearchParams(params) : '';
+  const r = await fetch(url + qs, { signal: AbortSignal.timeout(15000) });
+  if (!r.ok) return null;
+  return r;
+}
+
+async function arxiv(id) {
+  try {
+    const r = await _get('http://export.arxiv.org/api/query', { id_list: id, max_results: '1' });
+    if (!r) return null;
+    const xml = await r.text();
+    const entry = xml.match(/<entry>([\s\S]*?)<\/entry>/);
+    if (!entry) return null;
+    const e = entry[1];
+    const title = ((e.match(/<title>([\s\S]*?)<\/title>/) || [])[1] || '').replace(/\s+/g, ' ').trim();
+    if (!title) return null;
+    const creators = toCreators(
+      [...e.matchAll(/<name>([\s\S]*?)<\/name>/g)].map((m) => m[1].trim())
+    );
+    const date = ((e.match(/<published>([\s\S]*?)<\/published>/) || [])[1] || '').slice(0, 10);
+    const summary = ((e.match(/<summary>([\s\S]*?)<\/summary>/) || [])[1] || '').replace(/\s+/g, ' ').trim();
+    const cat = (e.match(/<arxiv:primary_category[^>]*term="([^"]+)"/) || [])[1] || '';
+    return {
+      itemType: 'preprint', title, creators, date,
+      url: `https://arxiv.org/abs/${id}`, arxivId: id, arxivCategory: cat, doi: '', journal: '',
+      abstract: summary.slice(0, 2000),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function openalexDoi(doi) {
+  try {
+    const r = await _get(`https://api.openalex.org/works/https://doi.org/${encodeURIComponent(doi)}`);
+    if (!r) return null;
+    const d = await r.json();
+    const title = d.display_name || '';
+    if (!title) return null;
+    const creators = toCreators(
+      (d.authorships || []).map((a) => (a.author || {}).display_name).filter(Boolean)
+    );
+    const src = ((d.primary_location || {}).source || {}).display_name || '';
+    return {
+      itemType: d.type === 'preprint' ? 'preprint' : 'journalArticle',
+      title, creators, date: String(d.publication_year || ''),
+      doi, url: `https://doi.org/${doi}`, journal: src, arxivId: '', arxivCategory: '',
+      abstract: abstractFromInverted(d.abstract_inverted_index).slice(0, 2000),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function crossrefTitle(title) {
+  try {
+    const r = await _get('https://api.crossref.org/works', {
+      'query.bibliographic': title, rows: '1',
+      select: 'DOI,title,author,issued,container-title,abstract',
+    });
+    if (!r) return null;
+    const it = (((await r.json()).message || {}).items || [])[0];
+    if (!it) return null;
+    const creators = (it.author || []).slice(0, 20).map((a) => {
+      const name = [a.given, a.family].filter(Boolean).join(' ') || a.name || '';
+      return name ? { creatorType: 'author', name } : null;
+    }).filter(Boolean);
+    const dp = ((it.issued || {})['date-parts'] || [[null]])[0] || [];
+    const date = dp.filter(Boolean).join('-');
+    const doi = it.DOI || '';
+    return {
+      itemType: 'journalArticle',
+      title: (it.title || [''])[0],
+      creators, date, doi,
+      url: doi ? `https://doi.org/${doi}` : '',
+      journal: (it['container-title'] || [''])[0] || '',
+      arxivId: '', arxivCategory: '',
+      abstract: unesc((it.abstract || '').replace(UNWANTED, ' ')).replace(/\s+/g, ' ').slice(0, 2000),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function crossrefDoi(doi) {
+  try {
+    const r = await _get(`https://api.crossref.org/works/${encodeURIComponent(doi)}`);
+    if (!r) return null;
+    const it = ((await r.json()).message) || {};
+    const title = (it.title || [''])[0];
+    if (!title) return null;
+    const creators = (it.author || []).slice(0, 20).map((a) => {
+      const name = [a.given, a.family].filter(Boolean).join(' ') || a.name || '';
+      return name ? { creatorType: 'author', name } : null;
+    }).filter(Boolean);
+    const dp = ((it.issued || {})['date-parts'] || [[null]])[0] || [];
+    return {
+      itemType: 'journalArticle',
+      title, creators,
+      date: dp.filter(Boolean).join('-'),
+      doi,
+      url: `https://doi.org/${doi}`,
+      journal: (it['container-title'] || [''])[0] || '',
+      arxivId: '', arxivCategory: '',
+      abstract: unesc((it.abstract || '').replace(UNWANTED, ' ')).replace(/\s+/g, ' ').slice(0, 2000),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// 直接论文链接的入口：arXiv → DOI → 出版商页面 citation meta
+async function lookupByUrl(url) {
+  const aid = arxivIdFromUrl(url);
+  if (aid) {
+    const m = await arxiv(aid);
+    if (m) return m;
+  }
+  const doi = doiFromUrl(url);
+  if (doi) {
+    const m = (await openalexDoi(doi)) || (await crossrefDoi(doi));
+    if (m) return m;
+    return null;
+  }
+  const pm = await pageCitationMeta(url);
+  if (pm && pm.title) {
+    if (pm.doi) {
+      const m = (await openalexDoi(pm.doi)) || (await crossrefDoi(pm.doi));
+      if (m) return m;
+    }
+    if (pm.title.length > 15) {
+      const cm = await crossrefTitle(pm.title);
+      if (cm && cm.title) return cm;
+    }
+    // 兜底：直接用页面 citation 元数据建条目
+    return {
+      itemType: 'journalArticle',
+      title: pm.title,
+      creators: toCreators(pm.authors),
+      date: pm.date || '',
+      doi: pm.doi || '',
+      url,
+      journal: pm.journal || '',
+      arxivId: '', arxivCategory: '',
+      abstract: (pm.abstract || '').slice(0, 2000),
+    };
+  }
+  return null;
+}
+
+async function lookup(article, titleGuess) {
+  for (const id of (article.arxivIds || []).slice(0, 1)) {
+    const m = await arxiv(id);
+    if (m) return m;
+  }
+  for (const d of (article.dois || []).slice(0, 1)) {
+    const m = await openalexDoi(d);
+    if (m) return m;
+  }
+  if (titleGuess) {
+    return crossrefTitle(titleGuess);
+  }
+  return null;
+}
+
+module.exports = { lookup, lookupByUrl };

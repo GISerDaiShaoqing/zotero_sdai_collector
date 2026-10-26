@@ -1,0 +1,43 @@
+{
+  "name": "zotero-collector",
+  "productName": "Zotero收集机器人",
+  "description": "剪贴板/飞书捕获微信推送与论文直链，LLM 分类后写入 Zotero",
+  "version": "1.0.0",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable"
+  },
+  "build": {
+    "appId": "com.zoterocollector.app",
+    "productName": "Zotero收集机器人",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "hud.html",
+      "hud.css",
+      "hud.js",
+      "renderer/**",
+      "src/**",
+      "seed/**",
+      "assets/**"
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "icon": "assets/icon.png"
+    }
+  },
+  "devDependencies": {
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.76.0"
+  }
+}

@@ -1,0 +1,165 @@
+/* Zotero 收集机器人 · 面板样式 */
+:root {
+  --bg: #f4f6f8;
+  --card: #ffffff;
+  --line: #e9edf2;
+  --txt: #1f2937;
+  --sub: #8a94a6;
+  --accent: #4f6ef2;
+  --accent-soft: #eef1fe;
+  --green: #16a34a;
+  --green-soft: #e9f7ef;
+  --orange: #b45309;
+  --orange-soft: #fdf3e3;
+  --red: #dc2626;
+  --red-soft: #fdecec;
+  --gray-soft: #eef1f4;
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; }
+body {
+  font-family: "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  background: var(--bg);
+  color: var(--txt);
+  font-size: 14px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- 顶栏 ---- */
+.topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 18px 10px;
+}
+.brand { display: flex; align-items: center; gap: 10px; flex: 1; }
+.dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: #22c55e; box-shadow: 0 0 0 0 rgba(34,197,94,.5);
+  animation: pulse 2s infinite;
+}
+.dot.paused { background: #9aa5b1; animation: none; }
+.dot.down { background: #f59e0b; animation: none; }
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(34,197,94,.45); }
+  70% { box-shadow: 0 0 0 8px rgba(34,197,94,0); }
+  100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
+}
+.title { font-size: 16px; font-weight: 700; letter-spacing: .3px; }
+.subtitle { font-size: 12px; color: var(--sub); margin-top: 2px; }
+.head-chips { display: flex; gap: 8px; }
+.chip {
+  font-size: 12px; color: var(--sub);
+  background: var(--gray-soft); border-radius: 999px; padding: 4px 10px;
+  white-space: nowrap;
+}
+.chip.good { color: var(--green); background: var(--green-soft); }
+.chip.warn { color: var(--orange); background: var(--orange-soft); }
+.icon-btn {
+  border: none; background: transparent; cursor: pointer;
+  font-size: 17px; color: var(--sub); padding: 6px 8px; border-radius: 8px;
+  transition: background .15s;
+}
+.icon-btn:hover { background: var(--gray-soft); color: var(--txt); }
+
+/* ---- 工具条 ---- */
+.toolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 2px 18px 12px;
+}
+.hint { margin-left: auto; font-size: 12px; color: var(--sub); }
+.btn {
+  border: 1px solid transparent; cursor: pointer;
+  border-radius: 9px; padding: 7px 14px; font-size: 13px;
+  transition: filter .15s, background .15s;
+  font-family: inherit;
+}
+.btn.ghost { background: var(--card); border-color: var(--line); color: var(--txt); }
+.btn.ghost:hover { background: var(--accent-soft); border-color: #d5dcfb; }
+.btn.primary { background: var(--accent); color: #fff; }
+.btn.primary:hover { filter: brightness(1.08); }
+
+/* ---- 记录列表 ---- */
+.list { flex: 1; overflow-y: auto; padding: 2px 18px 18px; }
+.list::-webkit-scrollbar { width: 8px; }
+.list::-webkit-scrollbar-thumb { background: #d5dbe3; border-radius: 4px; }
+.ev {
+  display: flex; gap: 12px; align-items: flex-start;
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px 14px; margin-bottom: 8px;
+  transition: box-shadow .15s;
+}
+.ev:hover { box-shadow: 0 2px 10px rgba(31,41,55,.06); }
+.ev-time { font-size: 11px; color: var(--sub); width: 44px; padding-top: 3px; flex: none; }
+.ev-main { flex: 1; min-width: 0; }
+.ev-title {
+  font-weight: 600; font-size: 13.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ev-meta { font-size: 12px; color: var(--sub); margin-top: 3px; }
+.ev-collections { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+.tag {
+  font-size: 11.5px; color: #3b4658; background: var(--gray-soft);
+  padding: 2px 8px; border-radius: 6px;
+}
+.ev-error { font-size: 12px; color: var(--red); margin-top: 5px; }
+.pill {
+  flex: none; font-size: 12px; padding: 3px 10px; border-radius: 999px;
+  align-self: flex-start;
+}
+.pill.saved { color: var(--green); background: var(--green-soft); }
+.pill.pending { color: var(--orange); background: var(--orange-soft); }
+.pill.failed { color: var(--red); background: var(--red-soft); }
+.pill.ignored { color: var(--sub); background: var(--gray-soft); }
+.pill.pending_write { color: var(--orange); background: var(--orange-soft); }
+.pill.new { color: var(--accent); background: var(--accent-soft); }
+
+.empty {
+  text-align: center; color: var(--sub); padding: 60px 20px; font-size: 13.5px; line-height: 1.9;
+}
+
+/* ---- 设置弹窗 ---- */
+.modal-mask {
+  position: fixed; inset: 0; background: rgba(23,28,38,.45);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 10;
+}
+.modal-mask.hidden, .hidden { display: none; }
+.modal {
+  width: 460px; max-height: 86vh; overflow-y: auto;
+  background: var(--card); border-radius: 14px; padding: 18px 20px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.18);
+}
+.modal-head {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 15px; font-weight: 700; margin-bottom: 10px;
+}
+.section { padding: 10px 0; border-top: 1px solid var(--line); }
+.section-title { font-size: 12.5px; color: var(--sub); margin-bottom: 10px; font-weight: 600; }
+.field { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
+.field span { width: 130px; flex: none; font-size: 13px; color: #4b5563; }
+.field input {
+  flex: 1; border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 10px; font-size: 13px; font-family: inherit; color: var(--txt);
+  background: #fbfcfe; outline: none; transition: border .15s;
+}
+.field input:focus { border-color: var(--accent); background: #fff; }
+.kv { display: flex; justify-content: space-between; font-size: 13px; padding: 5px 0; color: #4b5563; }
+.check-row { padding: 4px 0; font-size: 13px; color: #4b5563; }
+.check-row input { margin-right: 6px; vertical-align: -2px; }
+.kv span:last-child { color: var(--txt); }
+.row-btns { display: flex; gap: 8px; margin-top: 6px; }
+.modal-foot {
+  display: flex; justify-content: space-between; align-items: center;
+  border-top: 1px solid var(--line); padding-top: 12px; margin-top: 6px;
+}
+.note { font-size: 12px; color: var(--sub); }
+
+/* ---- 轻提示 ---- */
+.toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+  background: #232a35; color: #fff; font-size: 13px;
+  padding: 9px 16px; border-radius: 10px; z-index: 20;
+  animation: fadein .2s;
+}
+@keyframes fadein { from { opacity: 0; transform: translate(-50%, 6px); } }

@@ -1,0 +1,14 @@
+# 运行数据与凭据（绝不入库）
+electron-app/data/
+electron-app/seed/store.json
+.env
+*.log
+
+# 构建产物与依赖
+node_modules/
+dist/
+
+# 编辑器/系统
+.zcode/
+Thumbs.db
+.DS_Store

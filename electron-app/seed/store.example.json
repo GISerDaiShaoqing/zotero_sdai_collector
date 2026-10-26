@@ -1,0 +1,15 @@
+{
+  "seq": 0,
+  "events": [],
+  "config": {
+    "llmBaseUrl": "https://api.deepseek.com",
+    "llmKey": "",
+    "llmModel": "deepseek-chat",
+    "threshold": 0.7,
+    "bodyChars": 3000,
+    "autoWrite": false,
+    "feishuAppId": "",
+    "feishuAppSecret": "",
+    "hudBg": ""
+  }
+}

@@ -1,0 +1,48 @@
+/* HUD 卡片窗样式。必须保持外部文件：页面 CSP 禁止内联 <style>。 */
+:root {
+  --bg: #15191f; --card: #232936; --line: #313947;
+  --txt: #eef1f5; --sub: #98a2b3;
+  --green: #4ade80; --orange: #fbbf24; --red: #f87171; --accent: #6d8bff;
+}
+* { box-sizing: border-box; margin: 0; }
+body {
+  font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  background: var(--bg); color: var(--txt);
+  padding: 8px; overflow-y: auto; font-size: 12.5px;
+}
+body::-webkit-scrollbar { width: 6px; }
+body::-webkit-scrollbar-thumb { background: #39414e; border-radius: 3px; }
+/* 设置了背景图时：卡片半透明压在图上 */
+body.with-bg .card { background: rgba(35, 41, 54, 0.88); }
+.card {
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 12px; margin-bottom: 6px;
+  animation: slidein .18s ease-out;
+}
+.card:last-child { margin-bottom: 0; }
+@keyframes slidein { from { opacity: 0; transform: translateY(8px); } }
+.head { display: flex; align-items: flex-start; gap: 8px; }
+.grow { flex: 1; min-width: 0; }
+.ico { font-size: 13px; line-height: 1.3; }
+.ico.ok { color: var(--green); }
+.ico.bad { color: var(--red); }
+.t { font-weight: 600; font-size: 12.5px; line-height: 1.35; word-break: break-all; }
+.d { color: var(--sub); font-size: 11.5px; margin-top: 3px; line-height: 1.4; word-break: break-all; }
+.meta { color: var(--sub); font-size: 11px; margin-top: 2px; word-break: break-all; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.chip {
+  border: 1px solid var(--line); background: transparent; color: var(--sub);
+  border-radius: 999px; padding: 2px 9px; font-size: 11px; cursor: pointer;
+  transition: all .12s; font-family: inherit; word-break: break-all;
+}
+.chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.reason { color: var(--orange); font-size: 11px; margin-top: 5px; line-height: 1.4; }
+.btns { display: flex; gap: 7px; margin-top: 9px; }
+button.b {
+  flex: 1; border: none; border-radius: 7px; padding: 6px 0;
+  font-size: 12px; cursor: pointer; font-family: inherit;
+  transition: filter .12s;
+}
+button.b:hover { filter: brightness(1.12); }
+.b-ok { background: var(--accent); color: #fff; }
+.b-no { background: transparent; border: 1px solid var(--line); color: var(--sub); }

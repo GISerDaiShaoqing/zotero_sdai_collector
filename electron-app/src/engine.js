@@ -1,0 +1,414 @@
+// 流水线引擎：捕获 → 抓取 → 查重 → LLM 分类 → 论文匹配 → 写入 Zotero / 待确认。
+// 事件驱动：'update'（状态+记录快照，发给主面板）、'hud'（右下角卡片）。
+const fs = require('fs');
+const path = require('path');
+const { EventEmitter } = require('events');
+
+const store = require('./store');
+const zotero = require('./zotero');
+const extract = require('./extract');
+const classify = require('./classify');
+const paper = require('./paper');
+const feishu = require('./feishu');
+
+const DUP_WINDOW = 600000; // 同一链接 10 分钟内重复捕获忽略
+const TREE_CACHE = path.join(store.DATA_DIR, 'collections_cache.json');
+
+function kindOf(url) {
+  if (/mp\.weixin\.qq\.com/i.test(url)) return 'wechat';
+  if (extract.isPaperUrl(url)) return 'paper';
+  return 'unknown';
+}
+
+class Engine extends EventEmitter {
+  constructor() {
+    super();
+    this.tree = [];
+    this.queue = [];
+    this.busy = false;
+    this.paused = false;
+    this.recentCopies = new Map(); // url -> ts
+    this._retryTimer = null;
+  }
+
+  log(msg) {
+    try {
+      fs.appendFileSync(path.join(store.DATA_DIR, 'app.log'),
+        `${new Date().toISOString().slice(0, 19).replace('T', ' ')} ${msg}\n`, 'utf8');
+    } catch {}
+  }
+
+  async init() {
+    await this.loadTree();
+    this._retryTimer = setInterval(() => this._retryPendingWrites(), 300000);
+  }
+
+  async loadTree() {
+    try {
+      this.tree = await zotero.getCollections();
+    } catch (e) {
+      try {
+        this.tree = JSON.parse(fs.readFileSync(TREE_CACHE, 'utf8'));
+        this.log(`集合树用缓存（Zotero 不可用：${e.message}）`);
+      } catch {
+        this.tree = this.tree || [];
+      }
+    }
+    if (this.tree.length) {
+      try { fs.writeFileSync(TREE_CACHE, JSON.stringify(this.tree), 'utf8'); } catch {}
+    }
+    this._broadcast();
+    return this.tree.length;
+  }
+
+  status() {
+    const cfg = store.getConfig();
+    return {
+      listening: !this.paused,
+      nCollections: this.tree.length,
+      llm: cfg.llmBaseUrl ? (cfg.llmModel || '默认') : '未配置',
+      feishu: feishu.isRunning(),
+      nPending: store.byStatus('pending').length,
+      processing: this.busy,
+    };
+  }
+
+  syncFeishu() {
+    const c = store.getConfig();
+    if (c.feishuAppId && c.feishuAppSecret) {
+      const r = feishu.start(c.feishuAppId, c.feishuAppSecret, (url) => {
+        this.log(`飞书收到链接：${url}`);
+        this.enqueueUrl(url);
+      });
+      this.log(`飞书监听：${r.ok ? '已启动' : '启动失败 ' + (r.reason || '')}`);
+    } else {
+      feishu.stop();
+    }
+  }
+
+  _broadcast() {
+    this.emit('update', { status: this.status(), events: store.recent(60) });
+  }
+
+  hud(payload) {
+    this.emit('hud', payload);
+  }
+
+  // ---- 入口 ----
+  enqueueUrl(url) {
+    const now = Date.now();
+    if (now - (this.recentCopies.get(url) || 0) < DUP_WINDOW) {
+      this.log(`重复捕获忽略：${url}`);
+      return;
+    }
+    this.recentCopies.set(url, now);
+    this.queue.push({ type: 'url', url });
+    this._drain();
+  }
+
+  confirmChoose(id, paths) {
+    this.queue.push({ type: 'confirm', id, paths });
+    this._drain();
+  }
+
+  ignore(id) {
+    store.updateEvent(id, { status: 'ignored' });
+    this._broadcast();
+  }
+
+  reconfirmPending() {
+    for (const row of store.byStatus('pending')) {
+      let p = {};
+      try { p = JSON.parse(row.payload || '{}'); } catch {}
+      const cls = p.classification || {};
+      this.hud({
+        type: 'confirm', id: row.id,
+        title: row.title || row.url, blogTitle: row.blogTitle || '', date: row.publishDate || '',
+        paths: cls.paths || [],
+        reason: cls.confidence ? `置信度 ${Number(cls.confidence).toFixed(2)} 低于阈值` : '（无自动分类建议）',
+      });
+    }
+  }
+
+  async _drain() {
+    if (this.busy) return;
+    this.busy = true;
+    this._broadcast();
+    while (this.queue.length) {
+      const job = this.queue.shift();
+      try {
+        if (job.type === 'url') {
+          const kind = kindOf(job.url);
+          if (kind === 'paper') await this._processPaperUrl(job.url);
+          else await this._processUrl(job.url);
+        }
+        else if (job.type === 'confirm') await this._writePending(job.id, job.paths, job.via);
+      } catch (e) {
+        this.log(`任务异常 ${JSON.stringify(job).slice(0, 80)}：${e.message}`);
+      }
+    }
+    this.busy = false;
+    this._broadcast();
+  }
+
+  // ---- 流水线 ----
+  async _processUrl(url) {
+    if (store.findSaved(url)) {
+      this.hud({ type: 'result', ok: true, title: '已在库中，跳过', detail: '该链接此前已保存' });
+      return;
+    }
+    const ev = store.addEvent({ url });
+    this._broadcast();
+
+    let article;
+    try {
+      article = await extract.fetchArticle(url, store.getConfig().bodyChars);
+    } catch (e) {
+      // 正文抓取不是强制门槛：失败也可保存仅链接条目（标题用户在 Zotero 里补）
+      this.log(`抓取失败：${url} → ${String(e.message || e)}`);
+      store.updateEvent(ev.id, {
+        status: 'pending',
+        error: String(e.message || e),
+        payload: JSON.stringify({ article: null, classification: null, meta: null }),
+      });
+      this.hud({
+        type: 'confirm', id: ev.id, title: '（抓取失败 · 仅链接可存）',
+        blogTitle: '', date: '', paths: [],
+        reason: `${String(e.message || e).slice(0, 50)} ｜ 确认=存仅链接条目（标题自己补），忽略=丢弃`,
+      });
+      this._broadcast();
+      return;
+    }
+    store.updateEvent(ev.id, {
+      title: article.title, blogTitle: article.blogTitle, publishDate: article.publishDate,
+    });
+    this.log(`抓取成功：《${article.title.slice(0, 40)}》（${article.blogTitle} ${article.publishDate}）`);
+
+    try {
+      if (await zotero.recentUrlExists(url)) {
+        store.updateEvent(ev.id, { status: 'ignored', error: 'zotero已存在' });
+        this.hud({ type: 'result', ok: true, title: '已存在于 Zotero', detail: article.title.slice(0, 46) });
+        this._broadcast();
+        return;
+      }
+    } catch (e) {
+      this.log(`Zotero 查重跳过：${e.message}`);
+    }
+
+    const cfg = store.getConfig();
+    let cls;
+    try {
+      cls = await classify.classify(article, this.tree, cfg);
+    } catch (e) {
+      cls = classify.emptyCls ? classify.emptyCls('classify_error') : { paths: [], keys: [], confidence: 0, isPaper: false, paperTitleGuess: '', note: 'classify_error' };
+    }
+
+    let meta = null;
+    if (cls.isPaper) {
+      try {
+        meta = await paper.lookup(article, cls.paperTitleGuess);
+        if (meta) this.log(`论文匹配：${meta.title.slice(0, 50)}`);
+      } catch (e) {
+        this.log(`论文匹配失败：${e.message}`);
+      }
+    }
+
+    store.updateEvent(ev.id, {
+      confidence: cls.confidence,
+      paths: cls.paths,
+      keys: cls.keys,
+      payload: JSON.stringify({ article, classification: cls, meta }),
+    });
+
+    if (cfg.autoWrite && cls.confidence >= cfg.threshold && cls.keys.length) {
+      await this._write(ev.id, article, cls, meta);
+    } else {
+      store.updateEvent(ev.id, { status: 'pending' });
+      const reason = !cfg.autoWrite
+        ? '全自动写入未开启（点确认后按下方建议保存）'
+        : (cls.keys.length
+            ? `置信度 ${Number(cls.confidence).toFixed(2)} 低于阈值 ${cfg.threshold}`
+            : '没有匹配到合适的集合');
+      this.hud({
+        type: 'confirm', id: ev.id,
+        title: article.title, blogTitle: article.blogTitle, date: article.publishDate,
+        paths: cls.paths, reason,
+      });
+    }
+    this._broadcast();
+  }
+
+  // ---- 流水线（论文直链）----
+  async _processPaperUrl(url) {
+    if (store.findSaved(url)) {
+      this.hud({ type: 'result', ok: true, title: '已在库中，跳过', detail: '该链接此前已保存' });
+      return;
+    }
+    const ev = store.addEvent({ url });
+    this._broadcast();
+
+    let meta;
+    try {
+      meta = await paper.lookupByUrl(url);
+    } catch (e) {
+      meta = null;
+    }
+    if (!meta || !meta.title) {
+      const blocked = /cell\.com|sciencedirect\.com/i.test(url);
+      const msg = blocked
+        ? '该出版商（Cell/Elsevier 系）反爬封锁，无法自动识别——请从文章页复制 DOI 直链（doi.org/…）再发一次'
+        : '识别不到论文元数据（页面被反爬或链接无效）';
+      this.log(`论文元数据失败：${url}`);
+      store.updateEvent(ev.id, { status: 'failed', error: msg });
+      this.hud({ type: 'result', ok: false, title: '元数据获取失败', detail: msg.slice(0, 70) });
+      this._broadcast();
+      return;
+    }
+    this.log(`论文识别：${meta.title.slice(0, 50)}（${meta.journal || meta.itemType}）`);
+
+    const pseudo = {
+      url, title: meta.title, blogTitle: '', publishDate: meta.date || '',
+      abstract: meta.abstract || '', body: '',
+      paperLinks: [], arxivIds: [], dois: meta.doi ? [meta.doi] : [],
+    };
+    const cfg0 = store.getConfig();
+    let cls;
+    try {
+      cls = await classify.classify(pseudo, this.tree, cfg0);
+    } catch {
+      cls = { paths: [], keys: [], confidence: 0, isPaper: false, paperTitleGuess: '', note: 'classify_error' };
+    }
+    store.updateEvent(ev.id, {
+      title: meta.title, publishDate: meta.date || '',
+      confidence: cls.confidence, paths: cls.paths, keys: cls.keys,
+      payload: JSON.stringify({ article: pseudo, classification: cls, meta }),
+    });
+    const cfg = store.getConfig();
+    if (cfg.autoWrite && cls.confidence >= cfg.threshold && cls.keys.length) {
+      await this._write(ev.id, pseudo, cls, meta, true);
+    } else {
+      store.updateEvent(ev.id, { status: 'pending' });
+      const reason = !cfg.autoWrite
+        ? '全自动写入未开启（点确认后按下方建议保存）'
+        : (cls.keys.length
+            ? `置信度 ${Number(cls.confidence).toFixed(2)} 低于阈值 ${cfg.threshold}`
+            : '没有匹配到合适的集合（确认后存入库根目录）');
+      this.hud({
+        type: 'confirm', id: ev.id,
+        title: meta.title, blogTitle: meta.journal || '', date: meta.date || '',
+        paths: cls.paths, reason,
+      });
+    }
+    this._broadcast();
+  }
+
+  // ---- 写入 ----
+  _blogpostItem(article, keys) {
+    const it = { itemType: 'blogPost', title: article.title, url: article.url, collections: keys };
+    if (article.blogTitle) {
+      it.blogTitle = article.blogTitle;
+      // 公众号名写入"创建者"列（与 Zotero 微信翻译器的习惯一致）
+      it.creators = [{ creatorType: 'author', name: article.blogTitle, fieldMode: 1 }];
+    }
+    if (article.publishDate) it.date = article.publishDate;
+    if (article.abstract) it.abstractNote = article.abstract;
+    return it;
+  }
+
+  _paperItem(meta, keys) {
+    const it = { itemType: meta.itemType, title: meta.title, creators: meta.creators, collections: keys };
+    if (meta.date) it.date = meta.date;
+    if (meta.doi) it.DOI = meta.doi;
+    if (meta.url) it.url = meta.url;
+    if (meta.journal) it.publicationTitle = meta.journal;
+    if (meta.arxivId) it.extra = `arXiv: ${meta.arxivId}`;
+    if (meta.itemType === 'preprint' && meta.arxivCategory) {
+      it.tags = [{ tag: meta.arxivCategory, type: 1 }];
+    }
+    return it;
+  }
+
+  async _write(id, article, cls, meta, paperOnly = false, via = 'auto') {
+    const keys = cls.keys || [];
+    const items = paperOnly
+      ? [this._paperItem(meta, keys)]
+      : (meta ? [this._blogpostItem(article, keys), this._paperItem(meta, keys)]
+              : [this._blogpostItem(article, keys)]);
+    try {
+      const itemKeys = await zotero.createItems(items);
+      // via：confirm=用户在卡片上亲自确认（金标，可作分类示例）；auto=高置信自动写入
+      store.updateEvent(id, { status: 'saved', itemKeys, via });
+      this.hud({
+        type: 'result', ok: true, title: '已存入 Zotero',
+        detail: `${article.title.slice(0, 40)} → ${cls.paths.join('、') || '（未归集合）'}${!paperOnly && meta ? '（含论文条目）' : ''}`,
+      });
+    } catch (e) {
+      if (e.kind === 'unavailable') {
+        store.updateEvent(id, { status: 'pending_write', error: e.message });
+        this.hud({ type: 'result', ok: false, title: 'Zotero 未运行', detail: '已暂存，Zotero 打开后自动补写' });
+      } else {
+        store.updateEvent(id, { status: 'failed', error: e.message });
+        this.hud({ type: 'result', ok: false, title: e.kind === 'auth' ? '未获授权' : '写入失败', detail: e.message.slice(0, 90) });
+      }
+    }
+    this._broadcast();
+  }
+
+  async _writePending(id, chosenPaths, via = 'confirm') {
+    const row = store.byStatus('pending').find((e) => e.id === id) || store.recent(200).find((e) => e.id === id);
+    if (!row || !row.payload) {
+      store.updateEvent(id, { status: 'failed', error: 'payload 缺失' });
+      return;
+    }
+    let p;
+    try { p = JSON.parse(row.payload); } catch {
+      store.updateEvent(id, { status: 'failed', error: 'payload 损坏' });
+      return;
+    }
+    const meta = p.meta || null;
+    const pathToKey = new Map(this.tree.map((c) => [c.path, c.key]));
+
+    // 抓取失败的兜底：仅链接条目（标题/字段由用户在 Zotero 补全）
+    if (!p.article) {
+      const emptyArticle = { url: row.url, title: '', blogTitle: '', publishDate: '', abstract: '', body: '', paperLinks: [], arxivIds: [], dois: [] };
+      const emptyCls = { paths: [], keys: [], confidence: 0, isPaper: false, paperTitleGuess: '' };
+      const item = { itemType: 'blogPost', title: row.url, url: row.url, collections: [] };
+      try {
+        const itemKeys = await zotero.createItems([item]);
+        store.updateEvent(id, { status: 'saved', itemKeys });
+        this.hud({ type: 'result', ok: true, title: '已存入 Zotero（仅链接）', detail: '标题请手动补全' });
+      } catch (e) {
+        store.updateEvent(id, { status: e.kind === 'unavailable' ? 'pending_write' : 'failed', error: e.message });
+        this.hud({ type: 'result', ok: false, title: '写入失败', detail: e.message.slice(0, 70) });
+      }
+      this._broadcast();
+      return;
+    }
+
+    const article = p.article;
+    let cls = p.classification || { paths: [], keys: [], confidence: 0, isPaper: false, paperTitleGuess: '' };
+    if (Array.isArray(chosenPaths)) {
+      cls = {
+        ...cls,
+        paths: chosenPaths,
+        keys: chosenPaths.map((pt) => pathToKey.get(pt)).filter(Boolean),
+      };
+    }
+    await this._write(id, article, cls, meta);
+  }
+
+  _retryPendingWrites() {
+    for (const row of store.byStatus('pending_write')) {
+      this.log(`重试暂存写入 #${row.id}`);
+      // 当初是自动写入失败 → 补写仍算 auto，不算用户确认
+      this.queue.push({ type: 'confirm', id: row.id, paths: undefined, via: 'auto' });
+    }
+    if (this.queue.length) this._drain();
+  }
+
+  dispose() {
+    if (this._retryTimer) clearInterval(this._retryTimer);
+  }
+}
+
+module.exports = new Engine();

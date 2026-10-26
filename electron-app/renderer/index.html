@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'" />
+  <link rel="stylesheet" href="style.css" />
+  <title>Zotero 收集机器人</title>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot" id="dot"></span>
+      <div>
+        <div class="title">Zotero 收集机器人</div>
+        <div class="subtitle" id="subtitle">正在启动…</div>
+      </div>
+    </div>
+    <div class="head-chips" id="headChips"></div>
+    <button class="icon-btn" id="settingsBtn" title="设置">⚙</button>
+  </header>
+
+  <div class="toolbar">
+    <button class="btn ghost" id="pauseBtn">暂停监听</button>
+    <button class="btn ghost" id="reconfirmBtn">重弹待确认</button>
+    <button class="btn ghost" id="clearBtn">清空显示</button>
+    <span class="hint">日常用法：在微信里复制公众号文章链接，其余全自动</span>
+  </div>
+
+  <main class="list" id="list"></main>
+
+  <div class="modal-mask hidden" id="settingsMask">
+    <div class="modal">
+      <div class="modal-head">
+        <span>设置</span>
+        <button class="icon-btn" id="settingsClose">✕</button>
+      </div>
+
+      <div class="section">
+        <div class="section-title">LLM 分类（OpenAI 兼容接口）</div>
+        <label class="field"><span>接口地址</span><input id="cfgBaseUrl" placeholder="https://api.deepseek.com" /></label>
+        <label class="field"><span>API Key</span><input id="cfgKey" type="password" placeholder="本地 Ollama 可留空" /></label>
+        <label class="field"><span>模型</span><input id="cfgModel" placeholder="deepseek-flash" /></label>
+        <label class="field"><span>分类阈值（低于则弹确认）</span><input id="cfgThreshold" type="number" min="0.3" max="0.95" step="0.05" /></label>
+      </div>
+
+      <div class="section">
+        <div class="section-title">飞书机器人（手机端入口）</div>
+        <label class="field"><span>App ID</span><input id="cfgFeishuId" placeholder="cli_…" /></label>
+        <label class="field"><span>App Secret</span><input id="cfgFeishuSecret" type="password" placeholder="开放平台获取" /></label>
+      </div>
+
+      <div class="section">
+        <div class="section-title">写入策略</div>
+        <div class="check-row"><label><input type="checkbox" id="cfgAutoWrite" /> 高置信度自动写入（关闭则每条弹确认卡片）</label></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">外观</div>
+        <div class="kv"><span>卡片窗背景图</span><span id="bgName">未设置</span></div>
+        <div class="row-btns">
+          <button class="btn ghost" id="pickBgBtn">选择图片…</button>
+          <button class="btn ghost" id="clearBgBtn">清除背景</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Zotero</div>
+        <div class="kv"><span>集合树</span><span id="zotCount">—</span></div>
+        <div class="kv"><span>写入授权</span><span id="zotAuth">—</span></div>
+        <div class="row-btns">
+          <button class="btn ghost" id="refreshTreeBtn">刷新集合树</button>
+          <button class="btn ghost" id="authorizeBtn">重新授权</button>
+        </div>
+      </div>
+
+      <div class="modal-foot">
+        <span class="note">保存后立即生效，无需重启</span>
+        <button class="btn primary" id="saveCfgBtn">保存设置</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast hidden" id="toast"></div>
+  <script src="ui.js"></script>
+</body>
+</html>
