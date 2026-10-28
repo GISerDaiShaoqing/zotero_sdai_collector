@@ -40,8 +40,13 @@ function addResultCard(p) {
 }
 
 function addConfirmCard(p) {
+  // 同一条目的旧确认卡先移除（改判重弹时避免两张卡都可点、重复写入）
+  document.querySelectorAll('.card[data-id]').forEach((c) => {
+    if (c.dataset.id === String(p.id)) c.remove();
+  });
   const el = document.createElement('div');
   el.className = 'card';
+  el.dataset.id = String(p.id);
   const chips = (p.paths || []).map((pt, i) =>
     `<button class="chip" data-i="${i}" data-path="${esc(pt)}">${esc(pt)}</button>`).join('');
   el.innerHTML = `

@@ -21,7 +21,8 @@ function log(msg) {
 
 // 从文字消息里解析"指定分类"提示：链接以外的文字按分隔符切开当集合名。
 // 例："<链接> 进 摘要方法" / "<链接> 存 数据处理、背景文献" / "存入数据处理 <链接>"
-// 只认文字消息（content JSON 里的 text 字段）；富文本/卡片维持只抽链接。
+// 空格不算分隔符（英文集合名自带空格，如 Urban & Human Geography）；
+// 分隔只认 、 ， ， ; ； ｜ | 和换行。只认文字消息；富文本/卡片维持只抽链接。
 function parseHintPaths(raw, url) {
   let text = '';
   try {
@@ -29,11 +30,10 @@ function parseHintPaths(raw, url) {
     if (obj && typeof obj.text === 'string') text = obj.text;
   } catch {}
   if (!text || !url) return [];
-  const rest = text.split(url).join(' ').replace(/\s+/g, ' ').trim();
+  const rest = text.split(url).join(' ').trim();
   if (!rest) return [];
-  // 箭头/冒号单独成段或粘在集合名前都常见；单字残留（如"存"）长度过滤掉，引擎侧再做引导词剥壳
   return rest
-    .split(/[、，,；;｜|\s]+/)
+    .split(/[、，,；;｜|\n]+/)
     .map((s) => s.trim())
     .filter((s) => s.length > 1);
 }

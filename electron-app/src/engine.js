@@ -112,7 +112,7 @@ class Engine extends EventEmitter {
   }
 
   // ---- 消息指定分类的匹配 ----
-  // 提示词的候选变体：原文 → 剥箭头/冒号 → 剥"存/进/到…"等引导词 → 再剥一次箭头
+  // 提示词的候选变体：原文 → 剥箭头/冒号 → 剥"存/进/到…"等引导词 → 再剥箭头 → 剥尾缀"里/中/内"
   _hintVariants(s) {
     const out = [s];
     let cur = s.replace(/^[→\-=▶>»~～:：]+/, '').trim();
@@ -121,23 +121,59 @@ class Engine extends EventEmitter {
     if (cur) out.push(cur);
     cur = cur.replace(/^[→\-=▶>»~～:：]+/, '').trim();
     if (cur) out.push(cur);
+    cur = cur.replace(/(?:里|中|内)$/, '').trim();
+    if (cur) out.push(cur);
     return out;
   }
 
-  // 集合树匹配：名字/全路径、大小写不敏感；唯一命中即用，同名多个报歧义（写 父路径/名字 消歧），全不中报未命中
+  // 归一化编辑距离相似度（0~1）；196 个集合、短串，DP 开销可忽略
+  _sim(a, b) {
+    const m = a.length, n = b.length;
+    if (!m || !n) return 0;
+    let prev = Array.from({ length: n + 1 }, (_, j) => j);
+    for (let i = 1; i <= m; i++) {
+      const cur = [i];
+      for (let j = 1; j <= n; j++) {
+        cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      }
+      prev = cur;
+    }
+    return 1 - prev[n] / Math.max(m, n);
+  }
+
+  // 集合树匹配（三级，逐级回退）：①全等 ②包含（提示词/集合名一方含另一方）③近似拼写（相似度≥0.8）。
+  // 大小写与空格/连字符/下划线不敏感；任一级命中多个都只报歧义列候选，绝不静默猜一个。
   _resolveHints(hints) {
+    const norm = (s) => String(s).toLowerCase().replace(/[\s\-_]+/g, '');
     const resolved = [], missed = [], ambiguous = [];
-    const match = (v) => this.tree.filter((c) =>
-      c.name === v || c.path === v
-      || c.name.toLowerCase() === v.toLowerCase() || c.path.toLowerCase() === v.toLowerCase());
     for (const h0 of hints || []) {
       const h = String(h0).trim();
       if (!h) continue;
       let done = false;
-      for (const v of this._hintVariants(h)) {
-        const hits = match(v);
+      for (const v of this._hintVariants(h).filter(Boolean)) {
+        const nv = norm(v);
+        if (!nv) continue;
+        const hasCjk = /[\u4e00-\u9fff]/.test(nv);
+        let hits = this.tree.filter((c) => norm(c.name) === nv || norm(c.path) === nv);
+        // 包含级：纯 ASCII 短词（如 "RS"）不参与，避免泛匹配刷屏
+        if (!hits.length && (nv.length >= 3 || (hasCjk && nv.length >= 2))) {
+          hits = this.tree.filter((c) => {
+            const nn = norm(c.name), np = norm(c.path);
+            return nn.includes(nv) || nv.includes(nn) || np.includes(nv) || nv.includes(np);
+          });
+        }
+        // 近似级：名字较长才启用（短词编辑距离容易乱命中）
+        if (!hits.length && nv.length >= 5) {
+          hits = this.tree.filter((c) => this._sim(nv, norm(c.name)) >= 0.8 || this._sim(nv, norm(c.path)) >= 0.8);
+        }
         if (hits.length === 1) { resolved.push(hits[0]); done = true; break; }
-        if (hits.length > 1) { ambiguous.push({ hint: v, options: hits.map((c) => c.path) }); done = true; break; }
+        if (hits.length > 1) {
+          // 同名/包含命中去重后列候选；同名靠父路径消歧
+          const optKeys = [...new Set(hits.map((c) => c.key))];
+          ambiguous.push({ hint: v, options: optKeys.map((k) => this.tree.find((c) => c.key === k).path) });
+          done = true;
+          break;
+        }
       }
       if (!done) missed.push(h);
     }
@@ -145,17 +181,17 @@ class Engine extends EventEmitter {
     return { resolved: uniq, missed, ambiguous };
   }
 
-  // 确认卡上的说明文字；resolved 为空时（回落 LLM 前的提示）给"未命中/歧义"摘要
+  // 确认卡上的说明文字；resolved 为空时头部一次列全（未命中+歧义），避免与 notes 重复
   _hintReason(hint, embeddedPaper = false) {
     const { resolved, missed, ambiguous } = hint;
     if (!resolved.length && !missed.length && !ambiguous.length) return '';
     const notes = [];
     for (const a of ambiguous) notes.push(`「${a.hint}」同名多个：${a.options.join(' / ')}（写 父路径/名字 可消歧）`);
-    if (missed.length) notes.push(`未命中：${missed.join('、')}`);
+    if (resolved.length && missed.length) notes.push(`未命中：${missed.join('、')}`);
     if (embeddedPaper) notes.push('内嵌论文已识别，确认后一并保存');
     const head = resolved.length
       ? `按消息指定：${resolved.map((c) => c.path).join('、')}`
-      : (ambiguous.length ? `消息指定同名歧义：${ambiguous.map((a) => a.hint).join('、')}` : `消息指定未命中：${missed.join('、')}`);
+      : `消息指定未命中：${[...missed, ...ambiguous.map((a) => a.hint)].join('、')}`;
     return `${head}${notes.length ? ` ｜ ${notes.join(' ｜ ')}` : ''}`;
   }
 
@@ -163,12 +199,49 @@ class Engine extends EventEmitter {
   enqueueUrl(url, hints = []) {
     const now = Date.now();
     if (now - (this.recentCopies.get(url) || 0) < DUP_WINDOW) {
-      this.log(`重复捕获忽略：${url}`);
-      return;
+      const prev = store.recent(50).slice().reverse().find((e) => e.url === url);
+      // 已挂起等待确认时补发指定 → 改判该条目的分类并重弹卡
+      if (prev && prev.status === 'pending' && hints.length) {
+        const hint = this._resolveHints(hints);
+        if (hint.resolved.length) {
+          this.recentCopies.set(url, now);
+          this._applyHintToPending(prev.id, hint, hints);
+          return;
+        }
+      }
+      // 上次处理失败/被忽略的链接允许重发（否则首次粘错后 10 分钟内怎么发都进不来）
+      if (!(prev && (prev.status === 'failed' || prev.status === 'ignored'))) {
+        this.log(`重复捕获忽略：${url}`);
+        return;
+      }
+      this.log(`上次失败/忽略，允许重发：${url}`);
     }
     this.recentCopies.set(url, now);
     this.queue.push({ type: 'url', url, hints: hints || [] });
     this._drain();
+  }
+
+  // 给已挂起（pending）的条目改判分类：确认卡重弹，指定集合预选
+  _applyHintToPending(id, hint, rawHints) {
+    const row = store.recent(200).find((e) => e.id === id);
+    if (!row || !row.payload) return;
+    let p;
+    try { p = JSON.parse(row.payload); } catch { return; }
+    const cls = {
+      ...(p.classification || {}),
+      paths: hint.resolved.map((c) => c.path),
+      keys: hint.resolved.map((c) => c.key),
+      confidence: 1, note: 'hint',
+    };
+    store.updateEvent(id, { status: 'pending', confidence: 1, paths: cls.paths, keys: cls.keys, payload: JSON.stringify({ ...p, classification: cls }) });
+    this.log(`按消息指定改判分类：${cls.paths.join('、')} (#${id})`);
+    this.hud({
+      type: 'confirm', id,
+      title: row.title || row.url, blogTitle: row.blogTitle || '', date: row.publishDate || '',
+      paths: cls.paths,
+      reason: `${this._hintReason(hint, row.kind !== 'paper' && !!p.meta)}${hint.missed.length ? `（原提示：${rawHints.join('、')}）` : ''}`,
+    });
+    this._broadcast();
   }
 
   confirmChoose(id, paths) {
@@ -556,6 +629,7 @@ class Engine extends EventEmitter {
       store.updateEvent(id, { status: 'failed', error: 'payload 损坏' });
       return;
     }
+    if (row.status === 'saved') return; // 已写过（改判/重复确认卡防重）
     const meta = p.meta || null;
     const pathToKey = new Map(this.tree.map((c) => [c.path, c.key]));
     // 论文直链只写论文条目（此前误走微信文章分支，多出一条重复 blogPost）

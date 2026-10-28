@@ -18,7 +18,15 @@ let lastClip = '';
 
 const ICON = path.join(__dirname, 'assets', 'icon.png');
 
+function mainLog(msg) {
+  try {
+    fs.appendFileSync(path.join(store.DATA_DIR, 'app.log'),
+      `${new Date().toISOString().slice(0, 19).replace('T', ' ')} [main] ${msg}\n`, 'utf8');
+  } catch {}
+}
+
 if (!app.requestSingleInstanceLock()) {
+  mainLog('未取得单实例锁，退出（已有实例在运行）');
   app.quit();
 } else {
   app.on('second-instance', () => showPanel());
@@ -274,6 +282,7 @@ app.on('window-all-closed', () => {
   // 不退出：托盘常驻
 });
 app.on('before-quit', () => {
+  mainLog('应用退出（before-quit 触发）');
   quitting = true;
   if (pollTimer) clearInterval(pollTimer);
   engine.dispose();
