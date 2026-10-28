@@ -19,6 +19,25 @@ function log(msg) {
   } catch {}
 }
 
+// 从文字消息里解析"指定分类"提示：链接以外的文字按分隔符切开当集合名。
+// 例："<链接> 进 摘要方法" / "<链接> 存 数据处理、背景文献" / "存入数据处理 <链接>"
+// 只认文字消息（content JSON 里的 text 字段）；富文本/卡片维持只抽链接。
+function parseHintPaths(raw, url) {
+  let text = '';
+  try {
+    const obj = JSON.parse(raw);
+    if (obj && typeof obj.text === 'string') text = obj.text;
+  } catch {}
+  if (!text || !url) return [];
+  const rest = text.split(url).join(' ').replace(/\s+/g, ' ').trim();
+  if (!rest) return [];
+  // 箭头/冒号单独成段或粘在集合名前都常见；单字残留（如"存"）长度过滤掉，引擎侧再做引导词剥壳
+  return rest
+    .split(/[、，,；;｜|\s]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 1);
+}
+
 function start(appId, appSecret, onUrl) {
   if (!appId || !appSecret) return { ok: false, reason: '缺少 App ID / Secret' };
   if (isRunning() && creds && creds.appId === appId && creds.appSecret === appSecret) return { ok: true };
@@ -34,14 +53,16 @@ function start(appId, appSecret, onUrl) {
           const raw = typeof m.content === 'string' ? m.content : '';
           // 链接从整个消息内容里找：text/post(富文本)/卡片消息都可能是链接载体
           const url = extract.firstWechatUrl(raw) || extract.firstPaperUrl(raw);
-          log(`收到消息 type=${m.message_type} url=${url ? '✓' : '×'} raw=${raw.slice(0, 90)}`);
+          const hints = parseHintPaths(raw, url);
+          log(`收到消息 type=${m.message_type} url=${url ? '✓' : '×'} hint=${hints.join('|') || '-'} raw=${raw.slice(0, 90)}`);
           if (url && m.chat_id) {
-            onUrlCb && onUrlCb(url);
-            // 轻量回执，让手机侧知道已收到
+            onUrlCb && onUrlCb(url, hints);
+            // 轻量回执，让手机侧知道已收到（写了指定分类也回显，便于确认解析没跑偏）
             try {
+              const tail = hints.length ? `\n已按指定分类处理：${hints.join('、')}` : '';
               await api.im.message.create({
                 params: { receive_id_type: 'chat_id' },
-                data: { receive_id: m.chat_id, content: JSON.stringify({ text: '✓ 已收到，处理中…' }), msg_type: 'text' },
+                data: { receive_id: m.chat_id, content: JSON.stringify({ text: `✓ 已收到，处理中…${tail}` }), msg_type: 'text' },
               });
             } catch (e) {
               log(`回执发送失败：${e.message}`);
@@ -86,4 +107,4 @@ function isRunning() {
   return !!wsClient;
 }
 
-module.exports = { start, stop, isRunning };
+module.exports = { start, stop, isRunning, parseHintPaths };

@@ -53,8 +53,10 @@ function addConfirmCard(p) {
       <button class="b b-ok">确认保存</button>
       <button class="b b-no">忽略</button>
     </div>`;
-  const sel = new Set();
+  // 卡片上的集合默认全选（确认=按提议保存，取消勾选可剔除）
+  const sel = new Set((p.paths || []).slice(0, 3));
   el.querySelectorAll('.chip').forEach((c) => {
+    if (sel.has(c.dataset.path)) c.classList.add('on');
     c.onclick = () => {
       const path = c.dataset.path;
       if (sel.has(path)) { sel.delete(path); c.classList.remove('on'); }
