@@ -1,4 +1,4 @@
-# WeChat → Zotero 收集机器人
+# zotero_sdai_collector — 微信推送 / 论文直达 Zotero
 
 微信里看到感兴趣的公众号推送 / 论文链接 → 链接自动进机器人 → 抓取元数据 → LLM 按你的 Zotero 集合树分类 → 你确认后写入 Zotero。桌面托盘常驻（Electron），带主面板、右下角卡片通知（HUD）和手机端飞书入口。个人科研文献收集工具，非商用。
 
@@ -11,6 +11,7 @@
 - **写入策略**：默认每条弹确认卡片（点选集合胶囊 → 确认/忽略）；可开启高置信度自动写入（阈值可调）
 - **稳健性**：Zotero 未运行时自动暂存、恢复后补写；本地 API key 过期自动静默重授权；微信验证墙 3 次重试；抓取失败可存"仅链接条目"
 - **去重**：Zotero 已有同链接条目自动跳过；10 分钟内重复捕获忽略
+- **跟手直存**：Zotero 桌面端停留在某具体集合时，新链接直接落入该集合（跳过分类与确认）；停在库根目录时走常规分类流程
 
 ## 架构
 
@@ -33,14 +34,18 @@
 ## 快速开始
 
 ```bash
-git clone https://github.com/GISerDaiShaoqing/wechat-zotero-assistant.git
-cd wechat-zotero-assistant/electron-app
+git clone https://github.com/GISerDaiShaoqing/zotero_sdai_collector.git
+cd zotero_sdai_collector/electron-app
 npm install
 npm start        # 开发运行
 npm run dist     # 打包 Windows portable exe → dist/
 ```
 
 环境要求：Node.js ≥ 22（Electron 45）。打包出的 exe 双击即用、托盘常驻。
+
+### 跨平台
+
+CI 已配置（`.github/workflows/build.yml`）：推送 `v*` 标签时，GitHub Actions 自动编译 **Windows（portable exe + 安装包）/ macOS（dmg + zip）/ Linux（AppImage + deb）** 并汇总到草稿 Release；Actions 页面也可手动触发。macOS 版未签名，首次打开需右键 → 打开（或终端执行 `xattr -cr <应用路径>` 去除隔离标记）。
 
 ### 配置（面板右上角 ⚙）
 
@@ -57,7 +62,7 @@ npm run dist     # 打包 Windows portable exe → dist/
 
 ## 数据与隐私
 
-- 所有事件记录、配置存本地 JSON（开发态 `electron-app/data/`；打包版 `%APPDATA%\Zotero收集机器人\data\`）
+- 所有事件记录、配置存本地 JSON（开发态 `electron-app/data/`；打包版 `%APPDATA%\zotero_sdai_collector\data\`）
 - 外发流量仅两处：LLM 接口（分类用的正文节选）、飞书长连接；论文元数据查询发往 arXiv/OpenAlex/Crossref
 - `seed/store.example.json` 是空配置模板；**你自己的 `seed/store.json` 和 `data/` 已被 .gitignore 排除，不会提交**
 

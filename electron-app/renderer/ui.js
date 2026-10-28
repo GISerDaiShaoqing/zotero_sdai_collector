@@ -7,6 +7,7 @@ const STATUS_TEXT = {
 };
 let cfg = null;
 let authorized = false;
+let appVersion = '';
 
 function timeStr(ts) {
   const d = new Date(ts);
@@ -73,6 +74,7 @@ function fillSettings() {
   $('cfgModel').value = cfg.llmModel || '';
   $('cfgThreshold').value = cfg.threshold;
   $('cfgAutoWrite').checked = !!cfg.autoWrite;
+  $('cfgFollowSel').checked = cfg.followZoteroSelection !== false;
   $('cfgFeishuId').value = cfg.feishuAppId || '';
   $('cfgFeishuSecret').value = cfg.feishuAppSecret || '';
   $('bgName').textContent = cfg.hudBg ? cfg.hudBg.split(/[\\/]/).pop() : '未设置';
@@ -84,11 +86,13 @@ window.addEventListener('DOMContentLoaded', async () => {
   const init = await window.api.getInit();
   cfg = init.config;
   authorized = init.authorized;
+  appVersion = init.version || '';
   renderState(init.status);
   renderEvents(init.events);
 
   window.api.onState((snap) => {
     authorized = snap.authorized;
+    appVersion = snap.version || appVersion;
     renderState(snap.status);
     renderEvents(snap.events);
     if (cfg) cfg._nCollections = snap.status.nCollections;
@@ -110,6 +114,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       llmModel: $('cfgModel').value.trim(),
       threshold: Number($('cfgThreshold').value) || 0.7,
       autoWrite: $('cfgAutoWrite').checked,
+      followZoteroSelection: $('cfgFollowSel').checked,
       feishuAppId: $('cfgFeishuId').value.trim(),
       feishuAppSecret: $('cfgFeishuSecret').value.trim(),
     });
@@ -149,5 +154,31 @@ window.addEventListener('DOMContentLoaded', async () => {
   $('clearBtn').onclick = () => {
     window.api.clearHistory();
     toast('显示已清空');
+  };
+
+  // ---- 关于窗口 ----
+  const openAbout = () => {
+    $('aboutVersion').textContent = 'V' + (appVersion || '—');
+    $('updateResult').textContent = '';
+    $('aboutMask').classList.remove('hidden');
+  };
+  $('aboutBtn').onclick = openAbout;
+  window.api.onAbout(openAbout);
+  $('aboutClose').onclick = () => $('aboutMask').classList.add('hidden');
+  $('aboutMask').onclick = (e) => {
+    if (e.target === $('aboutMask')) $('aboutMask').classList.add('hidden');
+  };
+  document.querySelectorAll('.about-links a').forEach((a) => {
+    a.onclick = (e) => { e.preventDefault(); window.api.openUrl(a.dataset.url); };
+  });
+  $('checkUpdateBtn').onclick = async () => {
+    $('checkUpdateBtn').disabled = true;
+    $('updateResult').textContent = '检查中…';
+    const r = await window.api.checkUpdate();
+    $('checkUpdateBtn').disabled = false;
+    if (!r.ok) { $('updateResult').textContent = '检查失败：' + r.reason; return; }
+    $('updateResult').textContent = r.upToDate
+      ? `已是最新版本（V${r.current}）`
+      : `发现新版本 V${r.latest}，请到“更新日志”链接处下载`;
   };
 });

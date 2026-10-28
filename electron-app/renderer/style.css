@@ -1,4 +1,4 @@
-/* Zotero 收集机器人 · 面板样式 */
+/* zotero_sdai_collector · 面板样式 */
 :root {
   --bg: #f4f6f8;
   --card: #ffffff;
@@ -163,3 +163,16 @@ body {
   animation: fadein .2s;
 }
 @keyframes fadein { from { opacity: 0; transform: translate(-50%, 6px); } }
+
+/* ---- 关于窗口 ---- */
+.about-body { padding: 2px 0; }
+.about-name { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+.about-name .ver { color: var(--accent); font-size: 13px; font-weight: 600; margin-left: 4px; }
+.about-sub { color: var(--sub); font-size: 12.5px; margin-bottom: 10px; }
+.about-author { font-size: 13px; margin-bottom: 4px; }
+.about-links { margin: 6px 0 2px; font-size: 13px; }
+.about-links a { color: var(--accent); text-decoration: none; }
+.about-links a:hover { text-decoration: underline; }
+.about-license { color: var(--sub); font-size: 12px; margin-top: 8px; }
+.update-row { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+.update-result { font-size: 12.5px; color: var(--sub); }

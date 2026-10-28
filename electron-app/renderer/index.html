@@ -4,18 +4,19 @@
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'" />
   <link rel="stylesheet" href="style.css" />
-  <title>Zotero 收集机器人</title>
+  <title>zotero_sdai_collector</title>
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
       <span class="dot" id="dot"></span>
       <div>
-        <div class="title">Zotero 收集机器人</div>
+        <div class="title">zotero_sdai_collector</div>
         <div class="subtitle" id="subtitle">正在启动…</div>
       </div>
     </div>
     <div class="head-chips" id="headChips"></div>
+    <button class="icon-btn" id="aboutBtn" title="关于">ⓘ</button>
     <button class="icon-btn" id="settingsBtn" title="设置">⚙</button>
   </header>
 
@@ -52,6 +53,7 @@
       <div class="section">
         <div class="section-title">写入策略</div>
         <div class="check-row"><label><input type="checkbox" id="cfgAutoWrite" /> 高置信度自动写入（关闭则每条弹确认卡片）</label></div>
+        <div class="check-row"><label><input type="checkbox" id="cfgFollowSel" /> 跟随 Zotero 当前选中集合（停在某集合时直接存入，5 分钟内有效）</label></div>
       </div>
 
       <div class="section">
@@ -76,6 +78,30 @@
       <div class="modal-foot">
         <span class="note">保存后立即生效，无需重启</span>
         <button class="btn primary" id="saveCfgBtn">保存设置</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-mask hidden" id="aboutMask">
+    <div class="modal">
+      <div class="modal-head">
+        <span>关于</span>
+        <button class="icon-btn" id="aboutClose">✕</button>
+      </div>
+      <div class="about-body">
+        <div class="about-name">zotero_sdai_collector <span class="ver" id="aboutVersion">—</span></div>
+        <div class="about-sub">微信公众号推送 · 论文直链 → 智能分类 → Zotero</div>
+        <div class="about-author">作者：戴劭勍（Shaoqing Dai）· 武汉大学 资源与环境科学学院</div>
+        <div class="about-links">
+          <a href="#" data-url="https://gisersqdai.top/mycv/">个人主页</a> ·
+          <a href="#" data-url="https://github.com/GISerDaiShaoqing/zotero_sdai_collector">GitHub 仓库</a> ·
+          <a href="#" data-url="https://github.com/GISerDaiShaoqing/zotero_sdai_collector/blob/main/CHANGELOG.md">更新日志</a>
+        </div>
+        <div class="about-license">MIT License · 仅供个人学习与研究使用</div>
+        <div class="update-row">
+          <button class="btn ghost" id="checkUpdateBtn">检查更新</button>
+          <span class="update-result" id="updateResult"></span>
+        </div>
       </div>
     </div>
   </div>

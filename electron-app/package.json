@@ -1,8 +1,12 @@
 {
-  "name": "zotero-collector",
-  "productName": "Zotero收集机器人",
+  "name": "zotero-sdai-collector",
+  "productName": "zotero_sdai_collector",
   "description": "剪贴板/飞书捕获微信推送与论文直链，LLM 分类后写入 Zotero",
-  "version": "1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GISerDaiShaoqing/zotero_sdai_collector.git"
+  },
+  "version": "1.2.0",
   "private": true,
   "main": "main.js",
   "scripts": {
@@ -11,7 +15,7 @@
   },
   "build": {
     "appId": "com.zoterocollector.app",
-    "productName": "Zotero收集机器人",
+    "productName": "zotero_sdai_collector",
     "directories": {
       "output": "dist"
     },

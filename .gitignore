@@ -12,3 +12,6 @@ dist/
 .zcode/
 Thumbs.db
 .DS_Store
+
+# 软著申报材料（个人材料，不入开源仓库）
+软著材料/

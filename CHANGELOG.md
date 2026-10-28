@@ -1,0 +1,27 @@
+# 更新日志
+
+## V1.2.0（2026-10-28）
+
+- **选中集合直存**：Zotero 桌面端停留在某具体集合时，新链接直接落入该集合（connector 协议，跳过 LLM 分类与确认卡）；停在库根目录时走常规分类流程；探测读不到时（如开着文章标签页）用 5 分钟内最近停留的集合兜底，可在设置中关闭
+- **论文关键词 → 标签**：OpenAlex keywords/topics、Crossref subject、出版商页面 `citation_keywords` 与 `dc.subject`（Nature 系）四级来源；有关键词才打，没有留空
+- **论文条目补摘要**：journalArticle / preprint 写入 `abstractNote`（此前仅用于分类，未进条目）
+- 更名：Zotero 收集机器人 → **zotero_sdai_collector**（数据目录、托盘、Zotero 授权应用名、条目来源标记同步；GitHub 仓库与检查更新地址同改）
+- 新图标：深青渐变圆角方块 + 白色 "sd" 连写（取自 Shaoqing Dai）
+
+## V1.1.0（2026-10-28）
+
+- **关于窗口**：面板右上角 ⓘ 与托盘菜单均可打开；显示版本、作者、主页/仓库链接；支持检查更新（GitHub Releases）
+- **HUD 卡片窗**：修复样式被 CSP 拦截导致的白底裸版式；窗口高度随内容自适应；支持配置背景图
+- **打包分发**：electron-builder 打包 Windows portable 单文件 exe；打包版数据目录迁移至 `%APPDATA%\zotero_sdai_collector\data\`（首次启动自动载入配置种子）
+- **分类学习**：用户"确认保存"的归类作为 few-shot 示例注入分类提示词，分类随使用贴合个人习惯；新增 via 标记区分人工确认/自动写入
+- **论文元数据对齐**：卷/期/页码三通道补齐（Crossref/OpenAlex/页面 meta）；ISSN、期刊缩写、出版商、语言字段；作者姓-名权威拆分（Crossref given/family 直用、"姓, 名"逗号格式识别）；arXiv 条目关联正式版 DOI 时自动升级为期刊条目
+- 修复：论文直链经确认卡保存时误多生成一条 blogPost 条目
+- 许可证：MIT
+
+## V1.0.0（2026-10-26）
+
+- 首个 Electron 版本（此前为 Python 原型，已并入本项目）
+- 三入口捕获：剪贴板监听、飞书机器人长连接（手机端）、论文直链
+- LLM 分类：OpenAI 兼容接口与本地 Ollama（qwen3 系推理模型自动关闭思考）
+- 确认卡片审阅 → 写入 Zotero 本地 API（blogPost / journalArticle / preprint）
+- Zotero 未运行自动暂存补写、链接查重、微信风控重试、抓取失败降级为仅链接条目

@@ -28,6 +28,7 @@ class Engine extends EventEmitter {
     this.busy = false;
     this.paused = false;
     this.recentCopies = new Map(); // url -> ts
+    this.lastSel = null;           // 最近一次探测到的选中集合 { id, name, at }
     this._retryTimer = null;
   }
 
@@ -88,6 +89,22 @@ class Engine extends EventEmitter {
 
   _broadcast() {
     this.emit('update', { status: this.status(), events: store.recent(60) });
+  }
+
+  // 当前"用户停留的集合"：实时探测；读不到（如开着文章标签页）时用 5 分钟内最近停留的集合兜底
+  async _currentSelection() {
+    if (store.getConfig().followZoteroSelection === false) return null;
+    try {
+      const sel = await zotero.getSelectedCollection();
+      if (sel) {
+        this.lastSel = { ...sel, at: Date.now() };
+        return sel;
+      }
+    } catch {}
+    if (this.lastSel && Date.now() - this.lastSel.at < 300000) {
+      return { id: this.lastSel.id, name: this.lastSel.name };
+    }
+    return null;
   }
 
   hud(payload) {
@@ -157,7 +174,7 @@ class Engine extends EventEmitter {
       this.hud({ type: 'result', ok: true, title: '已在库中，跳过', detail: '该链接此前已保存' });
       return;
     }
-    const ev = store.addEvent({ url });
+    const ev = store.addEvent({ url, kind: 'wechat' });
     this._broadcast();
 
     let article;
@@ -193,6 +210,30 @@ class Engine extends EventEmitter {
       }
     } catch (e) {
       this.log(`Zotero 查重跳过：${e.message}`);
+    }
+
+    // 用户在 Zotero 里停在具体集合 → 直接入该集合（connector 直存，跳过 LLM 分类与确认卡）
+    try {
+      const sel = await this._currentSelection();
+      if (sel) {
+        let meta = null;
+        if ((article.arxivIds || []).length || (article.dois || []).length) {
+          try { meta = await paper.lookup(article, ''); if (meta) this.log(`论文匹配：${meta.title.slice(0, 50)}`); } catch {}
+        }
+        const items = [this._blogpostItem(article, [])];
+        if (meta) items.push(this._paperItem(meta, []));
+        await zotero.connectorSave(items);
+        store.updateEvent(ev.id, {
+          status: 'saved', via: 'confirm', paths: [sel.name], keys: [],
+          payload: JSON.stringify({ article, classification: { paths: [sel.name], keys: [], confidence: 1, isPaper: !!meta, paperTitleGuess: '' }, meta }),
+        });
+        this.log(`按选中集合直存：${sel.name}`);
+        this.hud({ type: 'result', ok: true, title: '已存入 Zotero', detail: `${article.title.slice(0, 36)} → ${sel.name}` });
+        this._broadcast();
+        return;
+      }
+    } catch (e) {
+      this.log(`选中集合直存失败，转常规流程：${e.message}`);
     }
 
     const cfg = store.getConfig();
@@ -244,7 +285,7 @@ class Engine extends EventEmitter {
       this.hud({ type: 'result', ok: true, title: '已在库中，跳过', detail: '该链接此前已保存' });
       return;
     }
-    const ev = store.addEvent({ url });
+    const ev = store.addEvent({ url, kind: 'paper' });
     this._broadcast();
 
     let meta;
@@ -271,6 +312,23 @@ class Engine extends EventEmitter {
       abstract: meta.abstract || '', body: '',
       paperLinks: [], arxivIds: [], dois: meta.doi ? [meta.doi] : [],
     };
+    // 用户停在具体集合 → 论文直接入该集合
+    try {
+      const sel = await this._currentSelection();
+      if (sel) {
+        await zotero.connectorSave([this._paperItem(meta, [])]);
+        store.updateEvent(ev.id, {
+          status: 'saved', via: 'confirm', paths: [sel.name], keys: [],
+          payload: JSON.stringify({ article: pseudo, classification: { paths: [sel.name], keys: [], confidence: 1, isPaper: true, paperTitleGuess: '' }, meta }),
+        });
+        this.log(`按选中集合直存论文：${sel.name}`);
+        this.hud({ type: 'result', ok: true, title: '已存入 Zotero', detail: `${meta.title.slice(0, 36)} → ${sel.name}` });
+        this._broadcast();
+        return;
+      }
+    } catch (e) {
+      this.log(`选中集合直存失败，转常规流程：${e.message}`);
+    }
     const cfg0 = store.getConfig();
     let cls;
     try {
@@ -315,16 +373,44 @@ class Engine extends EventEmitter {
     return it;
   }
 
+  // 论文条目字段与用户库习惯对齐：期刊论文带 ISSN/期刊缩写/出版商/语言/访问时间；
+  // preprint 用 repository + archiveID（arXiv）而非 extra。
   _paperItem(meta, keys) {
     const it = { itemType: meta.itemType, title: meta.title, creators: meta.creators, collections: keys };
     if (meta.date) it.date = meta.date;
     if (meta.doi) it.DOI = meta.doi;
     if (meta.url) it.url = meta.url;
     if (meta.journal) it.publicationTitle = meta.journal;
+    if (meta.journalAbbrev) it.journalAbbreviation = meta.journalAbbrev;
+    if (meta.volume) it.volume = meta.volume;
+    if (meta.issue) it.issue = meta.issue;
+    if (meta.pages) it.pages = meta.pages;
+    if (meta.issn) it.ISSN = meta.issn;
+    if (meta.publisher) it.publisher = meta.publisher;
+    if (meta.language) it.language = meta.language;
+    if (meta.abstract) it.abstractNote = meta.abstract;
     if (meta.arxivId) it.extra = `arXiv: ${meta.arxivId}`;
+    // 标签：preprint 的 arXiv 分类 + 各通道关键词（去重）；公众号推送不打标签
+    const tags = [];
+    const seenTag = new Set();
     if (meta.itemType === 'preprint' && meta.arxivCategory) {
-      it.tags = [{ tag: meta.arxivCategory, type: 1 }];
+      tags.push({ tag: meta.arxivCategory, type: 1 });
+      seenTag.add(meta.arxivCategory.toLowerCase());
     }
+    for (const kw of (meta.keywords || [])) {
+      const t = String(kw).trim();
+      if (t && !seenTag.has(t.toLowerCase())) {
+        seenTag.add(t.toLowerCase());
+        tags.push({ tag: t, type: 1 });
+      }
+    }
+    if (tags.length) it.tags = tags;
+    if (meta.itemType === 'preprint') {
+      it.repository = 'arXiv';
+      if (meta.arxivId) it.archiveID = `arXiv:${meta.arxivId}`;
+    }
+    it.accessDate = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+    it.libraryCatalog = 'zotero_sdai_collector';
     return it;
   }
 
@@ -367,6 +453,8 @@ class Engine extends EventEmitter {
     }
     const meta = p.meta || null;
     const pathToKey = new Map(this.tree.map((c) => [c.path, c.key]));
+    // 论文直链只写论文条目（此前误走微信文章分支，多出一条重复 blogPost）
+    const paperOnly = row.kind === 'paper';
 
     // 抓取失败的兜底：仅链接条目（标题/字段由用户在 Zotero 补全）
     if (!p.article) {
@@ -394,7 +482,7 @@ class Engine extends EventEmitter {
         keys: chosenPaths.map((pt) => pathToKey.get(pt)).filter(Boolean),
       };
     }
-    await this._write(id, article, cls, meta);
+    await this._write(id, article, cls, meta, paperOnly, via);
   }
 
   _retryPendingWrites() {

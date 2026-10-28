@@ -22,6 +22,7 @@ const DEFAULT_CONFIG = {
   feishuAppId: '',
   feishuAppSecret: '',
   hudBg: '',          // 卡片窗（HUD）背景图绝对路径，空 = 纯色
+  followZoteroSelection: true, // Zotero 停在具体集合时直接存入该集合（5 分钟内有效）
 };
 
 let state = { events: [], seq: 0 };

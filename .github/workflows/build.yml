@@ -1,0 +1,63 @@
+name: build
+
+# 打 v* 标签推送 → 三平台自动编译；也支持在 Actions 页面手动触发
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            args: --win portable nsis
+          - os: macos-latest
+            args: --mac dmg zip
+          - os: ubuntu-latest
+            args: --linux AppImage deb
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: electron-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm ci
+      - name: Build (${{ matrix.os }})
+        run: npx electron-builder ${{ matrix.args }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}
+          if-no-files-found: error
+          path: |
+            electron-app/dist/*.exe
+            electron-app/dist/*.dmg
+            electron-app/dist/*.zip
+            electron-app/dist/*.AppImage
+            electron-app/dist/*.deb
+
+  # 打标签时：把三平台产物汇总到一个草稿 Release（人工确认后发布）
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: release-assets
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: release-assets/**

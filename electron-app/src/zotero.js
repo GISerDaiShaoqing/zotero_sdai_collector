@@ -6,8 +6,9 @@ const crypto = require('crypto');
 const store = require('./store');
 
 const BASE = 'http://localhost:23119/api';
+const ROOT = 'http://localhost:23119';
 const USER = '0';
-const APP_NAME = 'Zotero收集机器人';
+const APP_NAME = 'zotero_sdai_collector';
 const KEY_FILE = path.join(store.DATA_DIR, 'zotero_local_key.txt');
 
 let serverId = null;
@@ -162,4 +163,37 @@ async function createItems(items) {
   throw new ZError('写入失败：重授权后仍 401', 'auth');
 }
 
-module.exports = { ZError, authorize, getCollections, recentUrlExists, createItems, hasKey: () => !!key };
+// Zotero 主窗口当前选中的集合（connector 协议；顶层 id 为数字或 C 前缀，停在库根目录/搜索时为空 → null）
+async function getSelectedCollection() {
+  try {
+    const r = await fetch(ROOT + '/connector/getSelectedCollection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Zotero-Connector-API-Version': '3' },
+      body: '{}',
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!r.ok) return null;
+    const d = await r.json().catch(() => null);
+    if (!d || !d.id) return null;
+    const id = String(d.id);
+    if (!/^(?:C)?\d+$/.test(id)) return null;
+    return { id, name: d.name || '' };
+  } catch {
+    return null;
+  }
+}
+
+// 浏览器插件同款保存通道：条目落入 Zotero 主窗口当前选中的集合（免 key、免集合 key 映射）
+async function connectorSave(items) {
+  const r = await fetch(ROOT + '/connector/saveItems', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Zotero-Connector-API-Version': '3' },
+    body: JSON.stringify({ items }),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!r.ok && r.status !== 204) {
+    throw new ZError(`connector 直存失败 HTTP ${r.status}`, 'write');
+  }
+}
+
+module.exports = { ZError, authorize, call, connectorSave, getCollections, getSelectedCollection, recentUrlExists, createItems, hasKey: () => !!key };

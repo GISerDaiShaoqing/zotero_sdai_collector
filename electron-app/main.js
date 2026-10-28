@@ -1,5 +1,5 @@
 // 应用生命周期：托盘常驻、主面板窗口、右下角卡片窗（HUD）、IPC 桥接、剪贴板轮询。
-const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen, clipboard, dialog } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen, clipboard, dialog, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
@@ -43,7 +43,7 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 function snapshot() {
-  return { status: engine.status(), events: store.recent(60), authorized: zotero.hasKey(), config: store.getConfig() };
+  return { status: engine.status(), events: store.recent(60), authorized: zotero.hasKey(), config: store.getConfig(), version: app.getVersion() };
 }
 
 function showPanel() {
@@ -56,7 +56,7 @@ function showPanel() {
 function createPanel() {
   panel = new BrowserWindow({
     width: 740, height: 540, minWidth: 600, minHeight: 440,
-    title: 'Zotero 收集机器人',
+    title: 'zotero_sdai_collector',
     icon: ICON,
     autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
@@ -116,16 +116,22 @@ function sendHudBg() {
 function createTray() {
   const icon = nativeImage.createFromPath(ICON).resize({ width: 32, height: 32 });
   tray = new Tray(icon);
-  tray.setToolTip('Zotero 收集机器人 — 复制微信文章链接即可收集');
+  tray.setToolTip('zotero_sdai_collector — 复制微信文章链接即可收集');
   const menu = Menu.buildFromTemplate([
     { label: '显示面板', click: showPanel },
     { label: '暂停监听', id: 'pause', click: togglePause },
     { label: '重弹待确认', click: () => engine.reconfirmPending() },
+    { label: '关于', click: openAbout },
     { type: 'separator' },
     { label: '退出', click: () => { quitting = true; app.quit(); } },
   ]);
   tray.setContextMenu(menu);
   tray.on('click', showPanel);
+}
+
+function openAbout() {
+  showPanel();
+  if (panel && !panel.isDestroyed()) panel.webContents.send('about');
 }
 
 function togglePause() {
@@ -136,6 +142,7 @@ function togglePause() {
       { label: paused ? '恢复监听' : '暂停监听', click: togglePause },
       { label: '显示面板', click: showPanel },
       { label: '重弹待确认', click: () => engine.reconfirmPending() },
+      { label: '关于', click: openAbout },
       { type: 'separator' },
       { label: '退出', click: () => { quitting = true; app.quit(); } },
     ]));
@@ -235,6 +242,32 @@ ipcMain.handle('clear-bg', () => {
 ipcMain.handle('quit', () => {
   quitting = true;
   app.quit();
+});
+ipcMain.handle('open-url', (e, url) => {
+  if (typeof url === 'string' && /^https?:\/\//.test(url)) shell.openExternal(url);
+});
+// 检查更新：查 GitHub Releases 最新版本；仓库未发布/网络不通时温和降级
+function isNewer(a, b) {
+  const pa = String(a).split('.').map(Number);
+  const pb = String(b).split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+  return false;
+}
+ipcMain.handle('check-update', async () => {
+  try {
+    const r = await fetch('https://api.github.com/repos/GISerDaiShaoqing/zotero_sdai_collector/releases/latest', {
+      headers: { 'User-Agent': 'zotero-collector', Accept: 'application/vnd.github+json' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (r.status === 404) return { ok: false, reason: '仓库尚未发布 Release' };
+    if (!r.ok) return { ok: false, reason: `HTTP ${r.status}` };
+    const d = await r.json();
+    const latest = String(d.tag_name || '').replace(/^v/i, '');
+    const current = app.getVersion();
+    return { ok: true, latest, current, upToDate: !isNewer(latest, current) };
+  } catch (e) {
+    return { ok: false, reason: e.name === 'TimeoutError' ? '网络超时' : '访问 GitHub 失败' };
+  }
 });
 
 app.on('window-all-closed', () => {
