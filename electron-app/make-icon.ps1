@@ -36,13 +36,8 @@ $dotX = $tx + $measured.Width - 10
 $limeBrush = New-Object System.Drawing.SolidBrush([System.Drawing.ColorTranslator]::FromHtml('#a3e635'))
 $g.FillEllipse($limeBrush, ($dotX - $dotR), ($baselineY - $dotR), (2 * $dotR), (2 * $dotR))
 
-# 降采样到 256 输出
-$out = New-Object System.Drawing.Bitmap(256, 256)
-$g2 = [System.Drawing.Graphics]::FromImage($out)
-$g2.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-$g2.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-$g2.DrawImage($bg, 0, 0, 256, 256)
-$g.Dispose(); $g2.Dispose()
-$out.Save((Join-Path $PSScriptRoot 'assets\icon.png'), [System.Drawing.Imaging.ImageFormat]::Png)
-$out.Dispose(); $bg.Dispose()
-Write-Output 'icon generated'
+# 直接按 1024 输出（electron-builder mac 转 icns 要求 ≥512x512，win/linux 自行缩放）
+$g.Dispose()
+$bg.Save((Join-Path $PSScriptRoot 'assets\icon.png'), [System.Drawing.Imaging.ImageFormat]::Png)
+$bg.Dispose()
+Write-Output 'icon generated (1024x1024)'
