@@ -13,11 +13,11 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            args: --win portable nsis
+            args: --win portable nsis --publish never
           - os: macos-latest
-            args: --mac dmg zip
+            args: --mac dmg zip --publish never
           - os: ubuntu-latest
-            args: --linux AppImage deb
+            args: --linux AppImage deb --publish never
     runs-on: ${{ matrix.os }}
     defaults:
       run:
