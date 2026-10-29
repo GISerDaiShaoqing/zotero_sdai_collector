@@ -28,6 +28,7 @@ function addResultCard(p) {
       <div class="grow">
         <div class="t">${esc(p.title)}</div>
         ${p.detail ? `<div class="d">${esc(p.detail)}</div>` : ''}
+        ${p.warn ? `<div class="d warnline">⚠️ ${esc(p.warn)}</div>` : ''}
       </div>
     </div>`;
   document.body.appendChild(el);
@@ -53,6 +54,7 @@ function addConfirmCard(p) {
     <div class="t">${esc(p.title)}</div>
     ${(p.blogTitle || p.date) ? `<div class="meta">${esc([p.blogTitle, p.date].filter(Boolean).join(' · '))}</div>` : ''}
     ${chips ? `<div class="chips">${chips}</div>` : ''}
+    ${p.warn ? `<div class="warn">⚠️ ${esc(p.warn)}</div>` : ''}
     <div class="reason">${esc(p.reason || '')}</div>
     <div class="btns">
       <button class="b b-ok">确认保存</button>

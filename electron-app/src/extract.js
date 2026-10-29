@@ -13,10 +13,14 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 
 class FetchError extends Error {}
 
+// URL 后紧贴中文/全角字符时在此截断（粘贴时把后面的文字带进链接是常见事故）；
+// 合法 URL 里的中文都是百分号编码（ASCII），不会误伤
+const CJK_CUT = /[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/;
+
 function firstWechatUrl(text) {
   const m = (text || '').match(WECHAT_URL_RE);
   if (!m) return null;
-  return m[0].replace(/[)\]}>'`,;:，。、]+$/, '') || null;
+  return m[0].split(CJK_CUT)[0].replace(/[)\]}>'`,;:，。、]+$/, '') || null;
 }
 
 function m1(pat, s) {
@@ -53,13 +57,22 @@ function tidyUrl(u) {
   return u;
 }
 
-function firstPaperUrl(text) {
+// 全部论文链接（去重、按出现顺序）——"微信文章 + 论文"一起粘贴时不再丢论文链接
+function paperUrls(text) {
   const urls = (text || '').match(/https?:\/\/[^\s"'<>\[\]{}]+/g) || [];
+  const out = [];
+  const seen = new Set();
   for (const raw of urls) {
-    const clean = tidyUrl(raw).replace(/[.,;:，。、]+$/, '');
-    if (isPaperUrl(clean)) return clean;
+    const clean = tidyUrl(raw.split(CJK_CUT)[0]).replace(/[.,;:，。、]+$/, '');
+    if (!isPaperUrl(clean) || seen.has(clean)) continue;
+    seen.add(clean);
+    out.push(clean);
   }
-  return null;
+  return out;
+}
+
+function firstPaperUrl(text) {
+  return paperUrls(text)[0] || null;
 }
 
 async function fetchArticle(url, bodyChars = 3000) {
@@ -153,4 +166,4 @@ function parse(h, url, bodyChars) {
   return a;
 }
 
-module.exports = { FetchError, fetchArticle, firstWechatUrl, firstPaperUrl, isPaperUrl, PAPER_HOSTS };
+module.exports = { FetchError, fetchArticle, firstWechatUrl, firstPaperUrl, paperUrls, isPaperUrl, PAPER_HOSTS };

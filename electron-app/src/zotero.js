@@ -57,7 +57,16 @@ async function call(method, p, { params, body, headers: extra, timeout = 20000 }
     serverId = r.headers.get('zotero-server-id') || serverId;
     return r;
   } catch (e) {
-    throw new ZError(`连不上 Zotero（是否在运行？）：${e.cause ? e.cause.code || e.cause.message : e.message}`, 'unavailable');
+    const detail = e.cause ? e.cause.code || e.cause.message : e.message;
+    // 超时中止 ≠ 没开：Zotero 正在同步/有弹窗时本地 API 会收下请求但迟迟不答（写请求还照常生效），
+    // 文案必须区分，否则误报"未运行"
+    const isAbort = e.name === 'AbortError' || /aborted/i.test(detail);
+    throw new ZError(
+      isAbort
+        ? `Zotero 没响应（${timeout / 1000}s 超时，可能正在同步或弹窗中）：${detail}`
+        : `连不上 Zotero（是否在运行？）：${detail}`,
+      'unavailable'
+    );
   } finally {
     clearTimeout(t);
   }
@@ -123,13 +132,14 @@ async function getCollections() {
 
 // 按 URL 查重：拉最近 blogPost 比对（?q= 全文搜索在本地 API 上会超时，不能用）。
 async function recentUrlExists(url) {
+  // 不限条目类型：微信文章（blogPost）和论文（journalArticle/preprint）都可能被 URL 补写命中
   const r = await call('GET', `users/${USER}/items/top`, {
-    params: { format: 'json', limit: '50', itemType: 'blogPost', sort: 'dateAdded', direction: 'desc' },
+    params: { format: 'json', limit: '100', sort: 'dateAdded', direction: 'desc' },
   });
   if (!r.ok) throw new ZError(`查重失败 HTTP ${r.status}`);
-  const target = url.split('#')[0].trim();
+  const target = url.split('#')[0].trim().toLowerCase();
   for (const it of await r.json()) {
-    if ((it.data?.url || '').split('#')[0].trim() === target) return it;
+    if (String(it.data?.url || '').split('#')[0].trim().toLowerCase() === target) return it;
   }
   return null;
 }

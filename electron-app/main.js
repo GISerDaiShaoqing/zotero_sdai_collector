@@ -170,10 +170,17 @@ function startClipboardPolling() {
       .then((text) => {
         if (!text || text === lastClip) return;
         lastClip = text;
-        const url = extract.firstWechatUrl(text) || extract.firstPaperUrl(text);
-        if (url) {
-          engine.log(`捕获链接：${url}`);
-          engine.enqueueUrl(url);
+        // 微信链接 + 论文链接一起粘：论文链接随 enqueueUrl 传入配对，不再只取第一条
+        const wechat = extract.firstWechatUrl(text);
+        const papers = extract.paperUrls(text).filter((u) => u !== wechat);
+        if (wechat) {
+          engine.log(`捕获链接：${wechat}${papers.length ? ` + 论文链接 ${papers.length} 条` : ''}`);
+          engine.enqueueUrl(wechat, [], papers);
+        } else {
+          for (const pu of papers) {
+            engine.log(`捕获论文链接：${pu}`);
+            engine.enqueueUrl(pu);
+          }
         }
       })
       .catch((e) => engine.log(`剪贴板读取异常：${e.message}`));

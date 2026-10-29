@@ -11,6 +11,7 @@ let wsClient = null;
 let creds = null; // 当前连接用的 {appId, appSecret}
 let api = null;   // 发消息用的 lark Client
 let onUrlCb = null;
+let lastChat = null; // 最近一条带链接的消息 { url, chatId }——处理完的论文提醒回发到这里
 
 function log(msg) {
   try {
@@ -51,12 +52,16 @@ function start(appId, appSecret, onUrl) {
         try {
           const m = (data && data.message) || {};
           const raw = typeof m.content === 'string' ? m.content : '';
-          // 链接从整个消息内容里找：text/post(富文本)/卡片消息都可能是链接载体
-          const url = extract.firstWechatUrl(raw) || extract.firstPaperUrl(raw);
+          // 链接从整个消息内容里找：text/post(富文本)/卡片消息都可能是链接载体；
+          // 微信链接 + 论文链接一起发时全部提取，论文链接交给引擎配对
+          const wechat = extract.firstWechatUrl(raw);
+          const papers = extract.paperUrls(raw).filter((u) => u !== wechat);
+          const url = wechat || papers[0] || null;
           const hints = parseHintPaths(raw, url);
-          log(`收到消息 type=${m.message_type} url=${url ? '✓' : '×'} hint=${hints.join('|') || '-'} raw=${raw.slice(0, 90)}`);
+          log(`收到消息 type=${m.message_type} url=${url ? '✓' : '×'} 论文链接=${papers.length} hint=${hints.join('|') || '-'} raw=${raw.slice(0, 90)}`);
           if (url && m.chat_id) {
-            onUrlCb && onUrlCb(url, hints);
+            lastChat = { url, chatId: m.chat_id };
+            onUrlCb && onUrlCb(url, hints, wechat ? papers : papers.slice(1));
             // 轻量回执，让手机侧知道已收到（写了指定分类也回显，便于确认解析没跑偏）
             try {
               const tail = hints.length ? `\n已按指定分类处理：${hints.join('、')}` : '';
@@ -101,10 +106,22 @@ function stop() {
   }
   creds = null;
   api = null;
+  lastChat = null;
 }
 
 function isRunning() {
   return !!wsClient;
 }
 
-module.exports = { start, stop, isRunning, parseHintPaths };
+// 处理完的补充回执：只回给"最近一条发过这个链接"的会话，避免串台。
+// 用于论文提醒——手机上发链接的人当场还拿着手机，正是补论文链接的时机。
+function notifyFor(url, text) {
+  if (!api || !text || !lastChat || lastChat.url !== url) return;
+  const chatId = lastChat.chatId;
+  api.im.message.create({
+    params: { receive_id_type: 'chat_id' },
+    data: { receive_id: chatId, content: JSON.stringify({ text }), msg_type: 'text' },
+  }).catch((e) => log(`提醒发送失败：${e.message}`));
+}
+
+module.exports = { start, stop, isRunning, parseHintPaths, notifyFor };

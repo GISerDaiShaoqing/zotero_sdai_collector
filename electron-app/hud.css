@@ -37,6 +37,9 @@ body.with-bg .card { background: rgba(35, 41, 54, 0.88); }
 }
 .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .reason { color: var(--orange); font-size: 11px; margin-top: 5px; line-height: 1.4; }
+/* 论文遗漏提醒行：比分类说明更醒目（红色） */
+.warn { color: var(--red); font-size: 11px; margin-top: 5px; line-height: 1.4; }
+.d.warnline { color: var(--red); }
 .btns { display: flex; gap: 7px; margin-top: 9px; }
 button.b {
   flex: 1; border: none; border-radius: 7px; padding: 6px 0;

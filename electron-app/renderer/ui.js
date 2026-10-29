@@ -37,6 +37,21 @@ function renderState(s) {
   authorized = !!s.authorized;
 }
 
+// 论文检测标记（主面板记录列表用）：从事件行推导内嵌论文的检测情况
+function paperMark(e) {
+  if (e.kind === 'paper') return { cls: 'ok', text: '📄 论文直链' };
+  let p = null;
+  try { p = JSON.parse(e.payload || 'null'); } catch {}
+  if (!p) return null;
+  if (p.meta && p.meta.title) return { cls: 'ok', text: `📄 已配对论文：${String(p.meta.title).slice(0, 26)}` };
+  const a = p.article;
+  if (!a) return null; // 抓取失败，无从判断论文情况
+  if ((a.arxivIds || []).length || (a.dois || []).length || (a.paperLinks || []).length) {
+    return { cls: 'warn', text: '📄 有论文线索未配对（可补发论文链接）' };
+  }
+  return { cls: 'none', text: '无论文' };
+}
+
 function renderEvents(events) {
   const list = $('list');
   if (!events.length) {
@@ -47,12 +62,15 @@ function renderEvents(events) {
     const tags = (e.paths || []).map((p) => `<span class="tag">${esc(p)}</span>`).join('');
     const err = e.error && e.status === 'failed' ? `<div class="ev-error">${esc(e.error)}</div>` : '';
     const meta = [e.blogTitle, e.publishDate].filter(Boolean).join(' · ');
+    const pm = paperMark(e);
+    const paperLine = pm ? `<div class="ev-paper ${pm.cls}">${esc(pm.text)}</div>` : '';
     return `<div class="ev">
       <div class="ev-time">${timeStr(e.createdAt)}</div>
       <div class="ev-main">
         <div class="ev-title" title="${esc(e.title || e.url)}">${esc(e.title || e.url)}</div>
         <div class="ev-meta">${esc(meta)}</div>
         ${tags ? `<div class="ev-collections">${tags}</div>` : ''}
+        ${paperLine}
         ${err}
       </div>
       <span class="pill ${e.status}">${STATUS_TEXT[e.status] || esc(e.status)}</span>
