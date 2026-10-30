@@ -41,6 +41,14 @@ class Engine extends EventEmitter {
 
   async init() {
     await this.loadTree();
+    // 队列在内存里：上次运行残留的 new 行此刻不可能再被处理，
+    // 全部回收成 failed（面板可见 + 10 分钟内允许原样重发重试）
+    for (const row of store.recent(200)) {
+      if (row.status === 'new') {
+        store.updateEvent(row.id, { status: 'failed', error: '上次未完成（应用退出中断）；重发该链接即可重试' });
+        this.log(`回收上次未完成任务 #${row.id}`);
+      }
+    }
     this._retryTimer = setInterval(() => this._retryPendingWrites(), 300000);
   }
 
@@ -377,15 +385,42 @@ class Engine extends EventEmitter {
     this._broadcast();
     while (this.queue.length) {
       const job = this.queue.shift();
+      // 看门狗：单任务超过 240s 仍不结束（下游挂死/超时未兜住）就放行后续队列，
+      // 避免一条卡死的任务把整条流水线冻结（Zotero 忙、网络黑洞等场景）。
+      // 240s 覆盖最坏正常链路：抓取重试+查重+论文匹配链+写库（正常 <2 分钟）。
+      // 环境变量 EngineJobTimeoutMs 仅测试/诊断时用，平时无需设置。
+      const JOB_TIMEOUT = Number(process.env.EngineJobTimeoutMs) || 240000;
+      let taskP = null;
       try {
         if (job.type === 'url') {
           const kind = kindOf(job.url);
-          if (kind === 'paper') await this._processPaperUrl(job.url, job.hints);
-          else await this._processUrl(job.url, job.hints, job.paperUrl || '');
+          taskP = kind === 'paper' ? this._processPaperUrl(job.url, job.hints) : this._processUrl(job.url, job.hints, job.paperUrl || '');
         }
-        else if (job.type === 'confirm') await this._writePending(job.id, job.paths, job.via);
+        else if (job.type === 'confirm') taskP = this._writePending(job.id, job.paths, job.via);
       } catch (e) {
         this.log(`任务异常 ${JSON.stringify(job).slice(0, 80)}：${e.message}`);
+      }
+      const listed = taskP ? Promise.race([taskP, new Promise((_, rej) => {
+        this._wdTimer = setTimeout(() => {
+          const err = new Error(`超过 ${JOB_TIMEOUT / 1000}s 未结束（下游疑似挂死）`);
+          rej(Object.assign(err, { watchdog: true }));
+        }, JOB_TIMEOUT);
+        // 超时不让进程被空拖住
+        if (this._wdTimer.unref) this._wdTimer.unref();
+      })]) : Promise.resolve();
+      // 被看门狗放行后原任务再完成的晚到结果不再关心，晚到的异常也吞掉防 unhandledRejection
+      if (taskP) taskP.catch(() => {});
+      try {
+        await listed;
+      } catch (e) {
+        const isWd = !!e.watchdog;
+        this.log(`${isWd ? '任务超时放行' : '任务异常'} ${JSON.stringify(job).slice(0, 80)}：${e.message}`);
+        // 任务级的"new"行（还没走到任何流转）立即标失败：面板可见 + 10 分钟内允许重发
+        if (isWd && job.type === 'url') {
+          for (const row of store.recent(20)) {
+            if (row.url === job.url && row.status === 'new') store.updateEvent(row.id, { status: 'failed', error: '处理超时（下游疑似挂死）；重发该链接可重试' });
+          }
+        }
       }
     }
     this.busy = false;

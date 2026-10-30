@@ -37,7 +37,9 @@ function headers(extra = {}) {
 async function prime() {
   if (serverId) return;
   try {
-    const r = await fetch(BASE + '/');
+    // 必须带超时：Zotero 忙(同步中/弹窗)时会"接受连接但迟迟不回响应头"，
+    // 无超时的 fetch 会把 call() 链挂死，进而冻结整条引擎队列
+    const r = await fetch(BASE + '/', { signal: AbortSignal.timeout(10000) });
     serverId = r.headers.get('zotero-server-id') || serverId;
   } catch {}
 }

@@ -72,6 +72,16 @@ function start(appId, appSecret, onUrl) {
             } catch (e) {
               log(`回执发送失败：${e.message}`);
             }
+          } else if (raw.includes('http') && m.chat_id) {
+            // 消息里有网址但没认出链接：给一句解释，不静默吞掉
+            try {
+              await api.im.message.create({
+                params: { receive_id_type: 'chat_id' },
+                data: { receive_id: m.chat_id, content: JSON.stringify({ text: '没有识别出可处理的链接。本机器人支持公众号文章链接和论文直链（arXiv / doi.org / 期刊页 / OUP 等）' }), msg_type: 'text' },
+              });
+            } catch (e) {
+              log(`回执发送失败：${e.message}`);
+            }
           }
         } catch (e) {
           log(`消息处理异常：${e.message}`);
