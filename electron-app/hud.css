@@ -5,6 +5,9 @@
   --green: #4ade80; --orange: #fbbf24; --red: #f87171; --accent: #6d8bff;
 }
 * { box-sizing: border-box; margin: 0; }
+/* body 铺满整个窗口：背景图的定位区域跟随窗口而非内容高度，
+   否则窗口比卡片高时（下方留空）背景只在内容区渲染，空档处要么露底色要么靠平铺补 */
+html, body { height: 100%; }
 body {
   font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
   background: var(--bg); color: var(--txt);
@@ -12,8 +15,9 @@ body {
 }
 body::-webkit-scrollbar { width: 6px; }
 body::-webkit-scrollbar-thumb { background: #39414e; border-radius: 3px; }
-/* 设置了背景图时：卡片半透明压在图上 */
-body.with-bg .card { background: rgba(35, 41, 54, 0.88); }
+/* 设置了背景图时：卡片半透明压在图上（0.45 = 壁纸透进卡片、白标题/灰字仍可读；
+   想更透/更实就调最后一个数） */
+body.with-bg .card { background: rgba(35, 41, 54, 0.45); }
 .card {
   background: var(--card); border: 1px solid var(--line); border-radius: 10px;
   padding: 9px 12px; margin-bottom: 6px;

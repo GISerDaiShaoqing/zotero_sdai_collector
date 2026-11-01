@@ -91,13 +91,15 @@ window.api.onHud((p) => {
   else addResultCard(p);
 });
 
-// 设置了背景图时：深色蒙层压底保证文字可读，卡片改半透明
+// 设置了背景图时：深色蒙层压底保证文字可读，卡片改半透明。
+// 拉伸铺满（100% 100%）+ 禁止平铺：整张图只渲染一次，随窗口尺寸变形铺满
 window.api.onHudBg((dataUrl) => {
   if (dataUrl) {
     document.body.classList.add('with-bg');
     document.body.style.backgroundImage =
       `linear-gradient(rgba(18,22,28,.85), rgba(18,22,28,.85)), url("${dataUrl}")`;
-    document.body.style.backgroundSize = 'cover';
+    document.body.style.backgroundSize = '100% 100%';
+    document.body.style.backgroundRepeat = 'no-repeat';
     document.body.style.backgroundPosition = 'center';
   } else {
     document.body.classList.remove('with-bg');
