@@ -545,6 +545,12 @@ class Engine extends EventEmitter {
       meta = await this._lookupPaper(article, paperUrl, cls.paperTitleGuess);
       if (meta) this.log(`论文匹配：${meta.title.slice(0, 50)}`);
     }
+    // 配对的论文已在库里（此前单独存过/随别的文章存过）→ 文章直接继承它的集合分类，
+    // 不再让 LLM/阈值参与判断；库里那条没挂集合时按原分类继续
+    if (meta) {
+      const inh = await this._inheritClsFromPaper(meta);
+      if (inh) cls = inh;
+    }
     const warn = this._paperWarn(article, meta, paperUrl);
 
     store.updateEvent(ev.id, {
@@ -564,6 +570,7 @@ class Engine extends EventEmitter {
         : (cls.keys.length
             ? `置信度 ${Number(cls.confidence).toFixed(2)} 低于阈值 ${cfg.threshold}`
             : '没有匹配到合适的集合');
+      if (cls.note === 'inherit') reason += ' ｜ 已按库中论文的集合归类';
       if (hint.resolved.length || hint.missed.length || hint.ambiguous.length) {
         reason += ` ｜ ${this._hintReason(hint)}`;
       }
@@ -737,25 +744,52 @@ class Engine extends EventEmitter {
     return it;
   }
 
+  // 配对论文已在用户库里 → 文章沿用它的集合归类（最多 3 个，与确认卡上限一致）。
+  // 论文条目没挂集合 / 集合已不在当前集合树 → 返回 null，按原分类继续
+  async _inheritClsFromPaper(meta) {
+    const probe = this._paperItem(meta, []);
+    if (!probe.url) return null;
+    try {
+      const hit = await zotero.recentUrlExists(probe.url);
+      if (!hit) return null;
+      const byKey = new Map(this.tree.map((c) => [c.key, c]));
+      const picked = (Array.isArray(hit.data && hit.data.collections) ? hit.data.collections : [])
+        .map((k) => byKey.get(k)).filter(Boolean).slice(0, 3);
+      if (!picked.length) {
+        this.log(`论文已在库（${hit.key}）但未挂集合，文章按原分类继续`);
+        return null;
+      }
+      const cls = {
+        paths: picked.map((c) => c.path), keys: picked.map((c) => c.key),
+        confidence: 1, isPaper: true, paperTitleGuess: '', note: 'inherit',
+      };
+      this.log(`论文已在库（${hit.key}）→ 文章继承其分类：${cls.paths.join('、')}`);
+      return cls;
+    } catch (e) {
+      this.log(`读取库中论文分类失败（按原分类继续）：${String(e.message || e)}`);
+      return null;
+    }
+  }
+
   async _write(id, article, cls, meta, paperOnly = false, via = 'auto', warn = '') {
     const keys = cls.keys || [];
     const items = paperOnly
       ? [this._paperItem(meta, keys)]
       : (meta ? [this._blogpostItem(article, keys), this._paperItem(meta, keys)]
               : [this._blogpostItem(article, keys)]);
-    // 写前查重闸门：补写场景里"客户端超时中止"不代表没写进去（Zotero 正忙时会收下请求、
-    // 忙完照常生效）。补写前必须确认库里确实没有；查重不可判定（Zotero 没响应）时绝不盲写。
+    // 写前查重（逐条）：库里已有的条目跳过不重写，只写缺的。补写场景里"客户端超时中止"
+    // 不代表没写进去（Zotero 正忙时会收下请求、忙完照常生效），所以重试前必须逐条核对；
+    // 查重不可判定（Zotero 没响应）时绝不盲写。
+    // 不能"任一条命中就整条跳过"：配对写入（文章+论文）里论文可能已单独入库、文章还缺——
+    // 整条跳过会把文章静默吞掉（面板显示已存入，Zotero 里却没有）。
     let checkFailed = null;
+    const toWrite = [];
+    const inLibrary = [];
     try {
       for (const it of items) {
-        if (!it.url) continue;
-        if (await zotero.recentUrlExists(it.url)) {
-          store.updateEvent(id, { status: 'saved', itemKeys: [], via });
-          this.log(`写前查重命中（跳过重复写入）：${it.title.slice(0, 40)}`);
-          this.hud({ type: 'result', ok: true, title: '已在库中，跳过', detail: `${it.title.slice(0, 44)}（此前写入其实已生效）` });
-          this._broadcast();
-          return;
-        }
+        if (!it.url) { toWrite.push(it); continue; }
+        if (await zotero.recentUrlExists(it.url)) inLibrary.push(it);
+        else toWrite.push(it);
       }
     } catch (e) {
       if (e.kind === 'unavailable') {
@@ -764,16 +798,28 @@ class Engine extends EventEmitter {
         this._broadcast();
         return;
       }
-      checkFailed = e.message; // 其它查重错误（如 HTTP 异常）不做拦截，照常尝试写入
+      // 其它查重错误（如 HTTP 异常）不做拦截，照常写入全部条目
+      checkFailed = e.message;
+      toWrite.length = 0;
+      inLibrary.length = 0;
+      toWrite.push(...items);
     }
     if (checkFailed) this.log(`写前查重失败（照常尝试写入）：${checkFailed}`);
+    for (const it of inLibrary) this.log(`写前查重命中（跳过重复写入）：${it.title.slice(0, 40)}`);
+    if (!toWrite.length) {
+      // 全部条目都已在库 → 整条标已存（此前写入其实已生效）
+      store.updateEvent(id, { status: 'saved', itemKeys: [], via });
+      this.hud({ type: 'result', ok: true, title: '已在库中，跳过', detail: `${items[0].title.slice(0, 44)}（此前写入其实已生效）` });
+      this._broadcast();
+      return;
+    }
     try {
-      const itemKeys = await zotero.createItems(items);
+      const itemKeys = await zotero.createItems(toWrite);
       // via：confirm=用户在卡片上亲自确认（金标，可作分类示例）；auto=高置信自动写入
       store.updateEvent(id, { status: 'saved', itemKeys, via });
       this.hud({
         type: 'result', ok: true, title: '已存入 Zotero',
-        detail: `${article.title.slice(0, 40)} → ${cls.paths.join('、') || '（未归集合）'}${!paperOnly && meta ? '（含论文条目）' : ''}`,
+        detail: `${article.title.slice(0, 40)} → ${cls.paths.join('、') || '（未归集合）'}${!paperOnly && meta ? '（含论文条目）' : ''}${inLibrary.length ? `（已有 ${inLibrary.length} 条在库，未重复写入）` : ''}`,
         warn,
       });
     } catch (e) {
