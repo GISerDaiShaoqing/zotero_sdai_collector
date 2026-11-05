@@ -45,6 +45,9 @@ if (!app.requestSingleInstanceLock()) {
         resetHudSize();
         hud.webContents.send('hud', p);
         hud.showInactive();
+      } else {
+        // 平时不会发生（卡片窗只藏不关会发生）；发生了说明窗口被销毁、卡片会丢，先记日志
+        mainLog('有一张卡片未能送达：卡片窗不可用（恢复后由重弹待确认兜底）');
       }
     });
   });
@@ -70,6 +73,13 @@ function createPanel() {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   });
   panel.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  // 面板渲染进程异常退出会白屏：记日志并自动重载（重载后 index.html 会拉全量快照，无需其他处理）
+  panel.webContents.on('render-process-gone', (_e, d) => {
+    mainLog(`面板渲染进程异常退出（reason=${d.reason} exitCode=${d.exitCode}）`);
+    if (d.reason !== 'clean-exit') {
+      try { panel.webContents.reload(); } catch {}
+    }
+  });
   panel.on('close', (e) => {
     if (!quitting) {
       e.preventDefault();
@@ -95,7 +105,22 @@ function createHud() {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   });
   hud.setAlwaysOnTop(true, 'screen-saver');
-  hud.webContents.on('did-finish-load', sendHudBg);
+  // 启动或恢复后：把仍在等待确认的卡片自动重新弹出（状态已落盘；不重弹用户无从知晓）
+  hud.webContents.on('did-finish-load', () => {
+    sendHudBg();
+    try { engine.reconfirmPending(); } catch {}
+  });
+  // 看护：渲染进程被杀/挂起时，此前会把后续卡片全部塞进透明空壳——用户一张卡都收不到
+  // （一次排队二十多条全积压的根源）。现在记日志并自动重载；恢复完成时 did-finish-load
+  // 会自动重弹待确认。clean-exit 是窗口正常关闭（本项目只在退出时发生），不做处理
+  hud.webContents.on('render-process-gone', (_e, d) => {
+    mainLog(`卡片窗渲染进程异常退出（reason=${d.reason} exitCode=${d.exitCode}）`);
+    if (d.reason !== 'clean-exit') {
+      try { hud.webContents.reload(); } catch {}
+    }
+  });
+  hud.webContents.on('unresponsive', () => mainLog('卡片窗渲染进程无响应（挂起），尝试重载恢复'));
+  hud.webContents.on('responsive', () => mainLog('卡片窗已恢复响应'));
   hud.loadFile(path.join(__dirname, 'hud.html'));
 }
 
