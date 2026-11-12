@@ -90,3 +90,7 @@ https://mp.weixin.qq.com/s/xxx → 遥感/Background    （同名集合写父路
 ## License
 
 MIT（见 [LICENSE](LICENSE)）
+
+## 作者
+
+**Shaoqing Dai** · [ORCID 0000-0003-0858-4728](https://orcid.org/0000-0003-0858-4728) · [主页](https://gisersqdai.top/mycv/) · [GitHub @GISerDaiShaoqing](https://github.com/GISerDaiShaoqing) · [dsq1993qingge@163.com](mailto:dsq1993qingge@163.com)
