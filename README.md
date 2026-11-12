@@ -1,5 +1,14 @@
 # zotero_sdai_collector — 微信推送 / 论文直达 Zotero
 
+| 项目 | 信息 |
+|---|---|
+| 作者 | Shaoqing Dai |
+| 主页 | https://gisersqdai.top/mycv/ |
+| GitHub | [@GISerDaiShaoqing](https://github.com/GISerDaiShaoqing) |
+| E-mail | [dsq1993qingge@163.com](mailto:dsq1993qingge@163.com) |
+| ORCID | [0000-0003-0858-4728](https://orcid.org/0000-0003-0858-4728) |
+| License | MIT |
+
 微信里看到感兴趣的公众号推送 / 论文链接 → 链接自动进机器人 → 抓取元数据 → LLM 按你的 Zotero 集合树分类 → 你确认后写入 Zotero。桌面托盘常驻（Electron），带主面板、右下角卡片通知（HUD）和手机端飞书入口。个人科研文献收集工具，非商用。
 
 ## 功能
