@@ -50,21 +50,30 @@ function unesc(s) {
 }
 
 const ARXIV_ID_RE = /arxiv\.org\/(?:abs|pdf)\/([0-9]{4}\.[0-9]{4,5}(?:v\d+)?|[a-z\-]+(?:\.[A-Z]{2})?\/\d{7})/i;
-const DOI_IN_URL_RE = /doi\.org\/(10\.\d{4,9}\/[^\s?#"'<>]+)/i;
+// doi.org 直链，或出版商自己的 /doi/10.x 路径（tandfonline /doi/full/、Wiley /doi/、OUP 等）——
+// 这类页面多半挡着 Cloudflare 抓不了 citation meta，但 URL 里就带着 DOI，走 Crossref 直查
+const DOI_IN_URL_RE = /(?:doi\.org\/|\/doi\/(?:full|abs|epdf|pdf|epub)?\/?)(10\.\d{4,9}\/[^\s?#"'<>]+)/i;
 
 function arxivIdFromUrl(url) {
   const m = (url || '').match(ARXIV_ID_RE);
   return m ? m[1].replace(/v\d+$/i, '') : null;
 }
 
-function doiFromUrl(url) {
+// URL 里的 DOI 候选（按可能性排序）：出版商路径常带"文章号"尾巴（OUP …/doi/10.1093/nsr/
+// nwae001/7654321），生成递减候选逐个试，都失败再回落页面 meta
+function doiCandidatesFromUrl(url) {
   const m = (url || '').match(DOI_IN_URL_RE);
-  if (!m) return null;
-  try {
-    return decodeURIComponent(m[1]).toLowerCase();
-  } catch {
-    return m[1].toLowerCase();
+  if (!m) return [];
+  let s;
+  try { s = decodeURIComponent(m[1]); } catch { s = m[1]; }
+  s = s.toLowerCase().replace(/[.,;)"'」』]+$/, '');
+  const out = [s];
+  // 尾段是纯数字（如 OUP 的文章号 /7654321）才剥掉试一次；其余形态照原样只试整串
+  const parts = s.split('/');
+  if (parts.length > 2 && /^\d{1,12}$/.test(parts[parts.length - 1])) {
+    out.push(parts.slice(0, -1).join('/'));
   }
+  return out.filter((d, i) => /^10\.\d{4,9}\//.test(d) && out.indexOf(d) === i);
 }
 
 // 出版商页面通常内嵌 Highwire citation meta（nature/wiley/springer/mdpi/plos 等通用）
@@ -276,12 +285,11 @@ async function lookupByUrl(url) {
     const m = await arxiv(aid);
     if (m) return m;
   }
-  const doi = doiFromUrl(url);
-  if (doi) {
+  for (const doi of doiCandidatesFromUrl(url)) {
     const m = await doiMeta(doi);
     if (m) return m;
-    return null;
   }
+  // URL 里的 DOI 候选都查不到（或没有）→ 回落出版商页面 citation meta
   const pm = await pageCitationMeta(url);
   if (pm && pm.title) {
     if (pm.doi) {

@@ -8,6 +8,7 @@ const PAPER_HOSTS = [
   'mdpi.com', 'plos.org', 'cell.com', 'science.org', 'biorxiv.org', 'medrxiv.org',
   'ssrn.com', 'journals.aps.org', 'ieeexplore.ieee.org',
   'academic.oup.com', 'cambridge.org', 'frontiersin.org', 'pnas.org', 'sciengine.com',
+  'pubmed.ncbi.nlm.nih.gov', 'researchgate.net', 'cnki.net', 'cnki.com.cn', 'wanfangdata.com.cn',
 ];
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
@@ -58,14 +59,22 @@ function tidyUrl(u) {
   return u;
 }
 
+// "论文链接/原文/Paper/full text 等提示词 + 0~6 个标点空格 + URL"的紧贴写法，URL 直接采纳，
+// 不再要求域名白名单——是否真是论文交给元数据阶段甄别（匹配不上会显式失败，不静默写错条目）
+const CUE_TAIL_RE = /(?:论文|原文|paper|article|full ?text|阅读原文|查看原文|点击原文)[^a-z0-9]{0,6}$/i;
+
 // 全部论文链接（去重、按出现顺序）——"微信文章 + 论文"一起粘贴时不再丢论文链接
 function paperUrls(text) {
-  const urls = (text || '').match(/https?:\/\/[^\s"'<>\[\]{}]+/g) || [];
+  const t = String(text || '');
   const out = [];
   const seen = new Set();
-  for (const raw of urls) {
-    const clean = tidyUrl(raw.split(CJK_CUT)[0]).replace(/[.,;:，。、]+$/, '');
-    if (!isPaperUrl(clean) || seen.has(clean)) continue;
+  for (const m of t.matchAll(/https?:\/\/[^\s"'<>\[\]{}]+/g)) {
+    const clean = tidyUrl(m[0].split(CJK_CUT)[0]).replace(/[.,;:，。、]+$/, '');
+    if (!clean || seen.has(clean) || /mp\.weixin\.qq\.com/i.test(clean)) continue;
+    if (!isPaperUrl(clean)) {
+      // 非白名单域名只有贴在提示词后面才采纳；看 URL 前 24 个字符
+      if (!CUE_TAIL_RE.test(t.slice(Math.max(0, m.index - 24), m.index))) continue;
+    }
     seen.add(clean);
     out.push(clean);
   }
