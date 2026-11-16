@@ -73,6 +73,7 @@ function renderEvents(events) {
         ${paperLine}
         ${err}
       </div>
+      <a class="ev-open" title="在浏览器打开" data-url="${esc(e.url)}">↗</a>
       <span class="pill ${e.status}">${STATUS_TEXT[e.status] || esc(e.status)}</span>
     </div>`;
   }).join('');
@@ -114,6 +115,12 @@ window.addEventListener('DOMContentLoaded', async () => {
     renderState(snap.status);
     renderEvents(snap.events);
     if (cfg) cfg._nCollections = snap.status.nCollections;
+  });
+
+  // 记录行 ↗：系统默认浏览器打开原链接（主进程只放行 http/https，防任意协议注入）
+  $('list').addEventListener('click', (e) => {
+    const a = e.target.closest('.ev-open');
+    if (a && a.dataset.url) window.api.openUrl(a.dataset.url);
   });
 
   $('settingsBtn').onclick = async () => {

@@ -29,8 +29,11 @@ function addResultCard(p) {
         <div class="t">${esc(p.title)}</div>
         ${p.detail ? `<div class="d">${esc(p.detail)}</div>` : ''}
         ${p.warn ? `<div class="d warnline">⚠️ ${esc(p.warn)}</div>` : ''}
+        ${p.url ? `<a class="openlink" data-url="${esc(p.url)}">在浏览器打开 ↗</a>` : ''}
       </div>
     </div>`;
+  const link = el.querySelector('.openlink');
+  if (link) link.onclick = (ev) => { ev.preventDefault(); window.api.openUrl(p.url); };
   document.body.appendChild(el);
   fit();
   setTimeout(() => {
@@ -56,6 +59,7 @@ function addConfirmCard(p) {
     ${chips ? `<div class="chips">${chips}</div>` : ''}
     ${p.warn ? `<div class="warn">⚠️ ${esc(p.warn)}</div>` : ''}
     <div class="reason">${esc(p.reason || '')}</div>
+    ${p.url ? `<a class="openlink" data-url="${esc(p.url)}">在浏览器打开 ↗</a>` : ''}
     <div class="btns">
       <button class="b b-ok">确认保存</button>
       <button class="b b-no">忽略</button>
@@ -70,6 +74,8 @@ function addConfirmCard(p) {
       else if (sel.size < 3) { sel.add(path); c.classList.add('on'); }
     };
   });
+  const cl = el.querySelector('.openlink');
+  if (cl) cl.onclick = (ev) => { ev.preventDefault(); window.api.openUrl(p.url); };
   el.querySelector('.b-ok').onclick = () => {
     window.api.choose(p.id, 'confirm', [...sel]);
     el.remove();

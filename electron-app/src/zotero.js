@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const store = require('./store');
+const paper = require('./paper'); // 查重二重比对用：从链接里提取 DOI 候选（paper.js 无本地依赖，无循环引用）
 
 const BASE = 'http://localhost:23119/api';
 const ROOT = 'http://localhost:23119';
@@ -140,8 +141,15 @@ async function recentUrlExists(url) {
   });
   if (!r.ok) throw new ZError(`查重失败 HTTP ${r.status}`);
   const target = url.split('#')[0].trim().toLowerCase();
+  // 二重比对：URL 之外再比 DOI。浏览器 connector 存的论文条目 url 是出版商页面形态
+  // （ScienceDirect/Cell 等），跟 doi.org 查询串永远对不上，但条目 DOI 字段就是同一个 DOI
+  // （实测 tree 论文在"最近 100 条"第 26 位却漏判的根源）。arXiv 等无 DOI 链接此分支自然不参与
+  const dois = paper.doiCandidatesFromUrl(url);
   for (const it of await r.json()) {
-    if (String(it.data?.url || '').split('#')[0].trim().toLowerCase() === target) return it;
+    const d = it.data || {};
+    if (String(d.url || '').split('#')[0].trim().toLowerCase() === target) return it;
+    const itDoi = String(d.DOI || '').toLowerCase().trim();
+    if (itDoi && dois.includes(itDoi)) return it;
   }
   return null;
 }

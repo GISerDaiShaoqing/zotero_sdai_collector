@@ -63,20 +63,38 @@ function tidyUrl(u) {
 // 不再要求域名白名单——是否真是论文交给元数据阶段甄别（匹配不上会显式失败，不静默写错条目）
 const CUE_TAIL_RE = /(?:论文|原文|paper|article|full ?text|阅读原文|查看原文|点击原文)[^a-z0-9]{0,6}$/i;
 
+// 消息文本一趟扫描：http 链接与"裸 DOI"混合按出现顺序。裸 DOI 四种写法全收——
+// 10.1111/…、doi:10.…、DOI 10.…（前缀+可选空格）、doi.org/10.…（无协议），
+// 合成 https://doi.org/<DOI> 后照走论文流程（元数据 Crossref/OpenAlex，条目网址自动补全）。
+// (?<![\w/.]) 边界挡住版本号/路径尾巴误配（v10.2/3、2026.10.1111/…）；URL 分支在前，
+// 完整的 https://doi.org/… 链接由 URL 分支整体吃掉，不会被拆出重复 DOI
+const MSG_URL_OR_DOI_RE = /https?:\/\/[^\s"'<>\[\]{}]+|(?<![\w/.])doi\s*[:：]?\s*(10\.\d{4,9}\/[A-Za-z0-9._()\/\-]+)|(?<![\w/.])doi\.org\/(10\.\d{4,9}\/[A-Za-z0-9._()\/\-]+)|(?<![\w/.])(10\.\d{4,9}\/[A-Za-z0-9._()\/\-]+)/gi;
+
 // 全部论文链接（去重、按出现顺序）——"微信文章 + 论文"一起粘贴时不再丢论文链接
 function paperUrls(text) {
   const t = String(text || '');
   const out = [];
-  const seen = new Set();
-  for (const m of t.matchAll(/https?:\/\/[^\s"'<>\[\]{}]+/g)) {
-    const clean = tidyUrl(m[0].split(CJK_CUT)[0]).replace(/[.,;:，。、]+$/, '');
-    if (!clean || seen.has(clean) || /mp\.weixin\.qq\.com/i.test(clean)) continue;
-    if (!isPaperUrl(clean)) {
-      // 非白名单域名只有贴在提示词后面才采纳；看 URL 前 24 个字符
-      if (!CUE_TAIL_RE.test(t.slice(Math.max(0, m.index - 24), m.index))) continue;
+  const seen = new Set();    // 原样 URL 去重
+  const seenLc = new Set();  // 小写去重（合成的 doi.org 链接 vs 显式 doi.org 链接）
+  for (const m of t.matchAll(MSG_URL_OR_DOI_RE)) {
+    if (/^https?:/i.test(m[0])) {
+      const clean = tidyUrl(m[0].split(CJK_CUT)[0]).replace(/[.,;:，。、]+$/, '');
+      if (!clean || seen.has(clean) || seenLc.has(clean.toLowerCase()) || /mp\.weixin\.qq\.com/i.test(clean)) continue;
+      if (!isPaperUrl(clean)) {
+        // 非白名单域名只有贴在提示词后面才采纳；看 URL 前 24 个字符
+        if (!CUE_TAIL_RE.test(t.slice(Math.max(0, m.index - 24), m.index))) continue;
+      }
+      seen.add(clean);
+      seenLc.add(clean.toLowerCase());
+      out.push(clean);
+    } else {
+      // 裸 DOI：括号配平（Elsevier 系 DOI 自带括号）+ 去尾标点引号，小写统一
+      const doi = tidyUrl(m[1] || m[2] || m[3] || '').replace(/[.,;:)）'」』]+$/, '').toLowerCase();
+      const url = doi ? 'https://doi.org/' + doi : '';
+      if (!url || seenLc.has(url)) continue;
+      seenLc.add(url);
+      out.push(url);
     }
-    seen.add(clean);
-    out.push(clean);
   }
   return out;
 }
@@ -164,8 +182,8 @@ function parse(h, url, bodyChars) {
     if (a.arxivIds.length >= 3) break;
   }
   const doiSeen = new Set();
-  for (const m of h.matchAll(/(?<![\w/.])(10\.\d{4,9}\/[A-Za-z0-9._()\-]+)/g)) {
-    const d = m[1].replace(/[.()\-]+$/, '').toLowerCase();
+  for (const m of h.matchAll(/(?<![\w/.])(10\.\d{4,9}\/[A-Za-z0-9._()\/\-]+)/g)) {
+    const d = m[1].replace(/[.()\-/]+$/, '').toLowerCase();
     if (d && !doiSeen.has(d)) {
       doiSeen.add(d);
       a.dois.push(d);

@@ -339,4 +339,4 @@ async function lookup(article, titleGuess) {
   return null;
 }
 
-module.exports = { lookup, lookupByUrl };
+module.exports = { lookup, lookupByUrl, doiCandidatesFromUrl };

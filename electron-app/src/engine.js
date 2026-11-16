@@ -321,6 +321,7 @@ class Engine extends EventEmitter {
     this.hud({
       type: 'confirm', id,
       title: row.title || row.url, blogTitle: row.blogTitle || '', date: row.publishDate || '',
+      url: row.url,
       paths: cls.paths, warn,
       reason: `${this._hintReason(hint, row.kind !== 'paper' && !!meta)}${paperNote ? ` ｜ ${paperNote}` : ''}${hint.missed.length ? `（原提示：${rawHints.join('、')}）` : ''}`,
     });
@@ -348,6 +349,7 @@ class Engine extends EventEmitter {
     this.hud({
       type: 'confirm', id,
       title: row.title || row.url, blogTitle: row.blogTitle || '', date: row.publishDate || '',
+      url: row.url,
       paths: (p.classification || {}).paths || [],
       reason: `已补论文：《${String(meta.title).slice(0, 36)}》，确认后一并保存`,
     });
@@ -373,6 +375,7 @@ class Engine extends EventEmitter {
       this.hud({
         type: 'confirm', id: row.id,
         title: row.title || row.url, blogTitle: row.blogTitle || '', date: row.publishDate || '',
+        url: row.url,
         paths: cls.paths || [], warn: p.warn || '',
         reason: cls.note === 'hint' ? '按消息指定' : (cls.confidence ? `置信度 ${Number(cls.confidence).toFixed(2)} 低于阈值` : '（无自动分类建议）'),
       });
@@ -427,12 +430,27 @@ class Engine extends EventEmitter {
     this._broadcast();
   }
 
+  // 流水闸：此前本 app 存成功的链接直接跳过；顺手问一次 Zotero 把"库中分类"带上。
+  // 查不到时保持中性文案（可能是已删、也可能在"最近100条"查重窗口外——不据此重写，重复入库风险优先）
+  async _skipIfHistorySaved(url) {
+    if (!store.findSaved(url)) return false;
+    let inLib = null;
+    try {
+      const hit = await zotero.recentUrlExists(url);
+      inLib = hit ? this._existingCollectionPaths(hit) : null;
+      if (!hit) this.log(`流水标已存但 Zotero 最近条目未查到（可能已删或超出查重窗口）：${url}`);
+    } catch {}
+    this.hud({
+      type: 'result', ok: true, title: '已在库中，跳过', url,
+      detail: '该链接此前已保存' + (inLib ? (inLib.length ? `｜ 库中分类：${inLib.join('、')}` : '｜ 库中未挂集合') : ''),
+    });
+    this._broadcast();
+    return true;
+  }
+
   // ---- 流水线 ----
   async _processUrl(url, hints = [], paperUrl = '') {
-    if (store.findSaved(url)) {
-      this.hud({ type: 'result', ok: true, title: '已在库中，跳过', detail: '该链接此前已保存' });
-      return;
-    }
+    if (await this._skipIfHistorySaved(url)) return;
     const ev = store.addEvent({ url, kind: 'wechat' });
     this._broadcast();
 
@@ -460,9 +478,12 @@ class Engine extends EventEmitter {
       });
       this.hud({
         type: 'confirm', id: ev.id, title: '（抓取失败 · 仅链接可存）',
-        blogTitle: '', date: '', paths: fcls ? fcls.paths : [],
+        blogTitle: '', date: '', url,
+        paths: fcls ? fcls.paths : [],
         reason: `${this._hintReason(hint)}${fcls ? ' ｜ ' : ''}${String(e.message || e).slice(0, 50)} ｜ 确认=存仅链接条目（标题自己补），忽略=丢弃`,
       });
+      // 飞书来源的失败此前手机侧无感知：回执一条带原链接（文本里的网址手机端可点）
+      feishu.notifyFor(url, `⚠️ 文章抓取失败：${url}\n${String(e.message || e).slice(0, 60)}——可在电脑端确认"仅链接"保存，或稍后重发`);
       this._broadcast();
       return;
     }
@@ -472,9 +493,14 @@ class Engine extends EventEmitter {
     this.log(`抓取成功：《${article.title.slice(0, 40)}》（${article.blogTitle} ${article.publishDate}）`);
 
     try {
-      if (await zotero.recentUrlExists(url)) {
+      const hit = await zotero.recentUrlExists(url);
+      if (hit) {
+        const inLib = this._existingCollectionPaths(hit);
         store.updateEvent(ev.id, { status: 'ignored', error: 'zotero已存在' });
-        this.hud({ type: 'result', ok: true, title: '已存在于 Zotero', detail: article.title.slice(0, 46) });
+        this.hud({
+          type: 'result', ok: true, title: '已存在于 Zotero', url,
+          detail: `${article.title.slice(0, 46)}（${inLib.length ? `库中分类：${inLib.join('、')}` : '库中未挂集合'}）`,
+        });
         this._broadcast();
         return;
       }
@@ -499,14 +525,15 @@ class Engine extends EventEmitter {
       this.hud({
         type: 'confirm', id: ev.id,
         title: article.title, blogTitle: article.blogTitle, date: article.publishDate,
-        paths: cls.paths, warn, reason: this._hintReason(hint, !!meta),
+        url, paths: cls.paths, warn, reason: this._hintReason(hint, !!meta),
       });
       this._feishuPaperReply(url, meta, warn);
       this._broadcast();
       return;
     }
 
-    // 用户在 Zotero 里停在具体集合 → 直接入该集合（connector 直存，跳过 LLM 分类与确认卡）
+    // 用户在 Zotero 里停在具体集合 → 直接入该集合（connector 直存，跳过 LLM 分类与确认卡）。
+    // 直存路径同样写前逐条查重（与 _write 同一原则）：配对论文已在库就跳过不重写，只写缺的文章
     try {
       const sel = await this._currentSelection();
       if (sel) {
@@ -514,7 +541,18 @@ class Engine extends EventEmitter {
         if (meta) this.log(`论文匹配：${meta.title.slice(0, 50)}`);
         const items = [this._blogpostItem(article, [])];
         if (meta) items.push(this._paperItem(meta, []));
-        await zotero.connectorSave(items);
+        let paperSkipped = false;
+        const kept = [];
+        for (const it of items) {
+          if (!it.url) { kept.push(it); continue; }
+          if (await zotero.recentUrlExists(it.url)) {
+            this.log(`写前查重命中（跳过重复写入）：${it.title.slice(0, 40)}`);
+            if (it.itemType !== 'blogPost') paperSkipped = true;
+          } else {
+            kept.push(it);
+          }
+        }
+        if (kept.length) await zotero.connectorSave(kept);
         const warn = this._paperWarn(article, meta, paperUrl);
         const selPath = this._selectionPath(sel);
         store.updateEvent(ev.id, {
@@ -522,7 +560,7 @@ class Engine extends EventEmitter {
           payload: JSON.stringify({ article, classification: { paths: [selPath], keys: [], confidence: 1, isPaper: !!meta, paperTitleGuess: '' }, meta, warn }),
         });
         this.log(`按选中集合直存：${selPath}`);
-        this.hud({ type: 'result', ok: true, title: '已存入 Zotero', detail: `${article.title.slice(0, 36)} → ${selPath}`, warn });
+        this.hud({ type: 'result', ok: true, title: '已存入 Zotero', detail: `${article.title.slice(0, 36)} → ${selPath}${paperSkipped ? '（配对论文已在库，未重复写入）' : ''}`, url, warn });
         this._feishuPaperReply(url, meta, warn);
         this._broadcast();
         return;
@@ -577,7 +615,7 @@ class Engine extends EventEmitter {
       this.hud({
         type: 'confirm', id: ev.id,
         title: article.title, blogTitle: article.blogTitle, date: article.publishDate,
-        paths: cls.paths, warn, reason,
+        url, paths: cls.paths, warn, reason,
       });
       this._feishuPaperReply(url, meta, warn);
     }
@@ -586,10 +624,7 @@ class Engine extends EventEmitter {
 
   // ---- 流水线（论文直链）----
   async _processPaperUrl(url, hints = []) {
-    if (store.findSaved(url)) {
-      this.hud({ type: 'result', ok: true, title: '已在库中，跳过', detail: '该链接此前已保存' });
-      return;
-    }
+    if (await this._skipIfHistorySaved(url)) return;
     const ev = store.addEvent({ url, kind: 'paper' });
     this._broadcast();
 
@@ -603,10 +638,12 @@ class Engine extends EventEmitter {
       const blocked = /cell\.com|sciencedirect\.com/i.test(url);
       const msg = blocked
         ? '该出版商（Cell/Elsevier 系）反爬封锁，无法自动识别——请从文章页复制 DOI 直链（doi.org/…）再发一次'
-        : '识别不到论文元数据（页面被反爬或链接无效）';
+        : '识别不到论文元数据（页面被反爬、链接无效，或刚刊出尚未被文献库收录）';
       this.log(`论文元数据失败：${url}`);
       store.updateEvent(ev.id, { status: 'failed', error: msg });
-      this.hud({ type: 'result', ok: false, title: '元数据获取失败', detail: msg.slice(0, 70) });
+      this.hud({ type: 'result', ok: false, title: '元数据获取失败', detail: msg.slice(0, 70), url });
+      // 飞书来源的识别失败手机侧补一条带原链接的回执（此前完全无感知）
+      feishu.notifyFor(url, `⚠️ 论文识别失败：${url}\n页面多半被出版商反爬挡住——点开链接人工核对，或改发 doi.org/<DOI> 直链重试`);
       this._broadcast();
       return;
     }
@@ -633,16 +670,30 @@ class Engine extends EventEmitter {
       this.hud({
         type: 'confirm', id: ev.id,
         title: meta.title, blogTitle: meta.journal || '', date: meta.date || '',
-        paths: cls.paths, reason: this._hintReason(hint),
+        url, paths: cls.paths, reason: this._hintReason(hint),
       });
       this._broadcast();
       return;
     }
-    // 用户停在具体集合 → 论文直接入该集合
+    // 用户停在具体集合 → 论文直接入该集合。
+    // 直存路径同样写前查重：论文已在库就不重写（此前这条路径绕过了查重，旧条目会重复入库）
     try {
       const sel = await this._currentSelection();
       if (sel) {
         const selPath = this._selectionPath(sel);
+        const hit = meta.url ? await zotero.recentUrlExists(meta.url) : null;
+        if (hit) {
+          const inLib = this._existingCollectionPaths(hit);
+          this.log(`写前查重命中（论文已在库，跳过直存）：${meta.title.slice(0, 40)}${inLib.length ? `（库中分类：${inLib.join('、')}）` : ''}`);
+          // 不带 paths/via 标记：没写入新东西，不作为分类学习示例
+          store.updateEvent(ev.id, { status: 'saved', keys: [] });
+          this.hud({
+            type: 'result', ok: true, title: '已在库中，跳过', url,
+            detail: `${meta.title.slice(0, 36)}（此前已入库，未重复写入${inLib.length ? `｜ 库中分类：${inLib.join('、')}` : '｜ 库中未挂集合'}）`,
+          });
+          this._broadcast();
+          return;
+        }
         await zotero.connectorSave([this._paperItem(meta, [])]);
         store.updateEvent(ev.id, {
           status: 'saved', via: 'confirm', paths: [selPath], keys: [],
@@ -684,7 +735,7 @@ class Engine extends EventEmitter {
       this.hud({
         type: 'confirm', id: ev.id,
         title: meta.title, blogTitle: meta.journal || '', date: meta.date || '',
-        paths: cls.paths, reason,
+        url, paths: cls.paths, reason,
       });
     }
     this._broadcast();
@@ -744,6 +795,13 @@ class Engine extends EventEmitter {
     return it;
   }
 
+  // 库中已有条目挂的集合（全路径显示，最多 3 个，与确认卡上限一致）；没挂集合 → 空数组
+  _existingCollectionPaths(hit) {
+    const keys = Array.isArray(hit?.data?.collections) ? hit.data.collections : [];
+    const byKey = new Map(this.tree.map((c) => [c.key, c]));
+    return keys.map((k) => byKey.get(k)).filter(Boolean).map((c) => c.path).slice(0, 3);
+  }
+
   // 配对论文已在用户库里 → 文章沿用它的集合归类（最多 3 个，与确认卡上限一致）。
   // 论文条目没挂集合 / 集合已不在当前集合树 → 返回 null，按原分类继续
   async _inheritClsFromPaper(meta) {
@@ -794,7 +852,7 @@ class Engine extends EventEmitter {
     } catch (e) {
       if (e.kind === 'unavailable') {
         store.updateEvent(id, { status: 'pending_write', error: e.message });
-        this.hud({ type: 'result', ok: false, title: e.message.includes('没响应') ? 'Zotero 没响应' : 'Zotero 未运行', detail: '已暂存，恢复后自动补写（补写前先查重，不会重复入库）' });
+        this.hud({ type: 'result', ok: false, title: e.message.includes('没响应') ? 'Zotero 没响应' : 'Zotero 未运行', detail: '已暂存，恢复后自动补写（补写前先查重，不会重复入库）', url: article.url });
         this._broadcast();
         return;
       }
@@ -807,9 +865,13 @@ class Engine extends EventEmitter {
     if (checkFailed) this.log(`写前查重失败（照常尝试写入）：${checkFailed}`);
     for (const it of inLibrary) this.log(`写前查重命中（跳过重复写入）：${it.title.slice(0, 40)}`);
     if (!toWrite.length) {
-      // 全部条目都已在库 → 整条标已存（此前写入其实已生效）
+      // 全部条目都已在库 → 整条标已存（此前写入其实已生效）；顺带提示它们挂在哪些集合
+      const inLib = [...new Set(inLibrary.flatMap((it) => this._existingCollectionPaths(it)))].slice(0, 3);
       store.updateEvent(id, { status: 'saved', itemKeys: [], via });
-      this.hud({ type: 'result', ok: true, title: '已在库中，跳过', detail: `${items[0].title.slice(0, 44)}（此前写入其实已生效）` });
+      this.hud({
+        type: 'result', ok: true, title: '已在库中，跳过', url: article.url,
+        detail: `${items[0].title.slice(0, 44)}（此前写入其实已生效${inLib.length ? `｜ 库中分类：${inLib.join('、')}` : ''}）`,
+      });
       this._broadcast();
       return;
     }
@@ -817,18 +879,26 @@ class Engine extends EventEmitter {
       const itemKeys = await zotero.createItems(toWrite);
       // via：confirm=用户在卡片上亲自确认（金标，可作分类示例）；auto=高置信自动写入
       store.updateEvent(id, { status: 'saved', itemKeys, via });
+      // 部分条目已在库时逐条注明挂在哪个集合（只取第一条路径保持卡片简洁）
+      const inLibNote = inLibrary.length
+        ? `（${inLibrary.map((it) => {
+            const pp = this._existingCollectionPaths(it);
+            return `${it.itemType === 'blogPost' ? '文章' : '论文'}已在库${pp.length ? `：${pp[0]}` : ''}`;
+          }).join('；')}，未重复写入）`
+        : '';
       this.hud({
         type: 'result', ok: true, title: '已存入 Zotero',
-        detail: `${article.title.slice(0, 40)} → ${cls.paths.join('、') || '（未归集合）'}${!paperOnly && meta ? '（含论文条目）' : ''}${inLibrary.length ? `（已有 ${inLibrary.length} 条在库，未重复写入）` : ''}`,
+        detail: `${article.title.slice(0, 40)} → ${cls.paths.join('、') || '（未归集合）'}${!paperOnly && meta ? '（含论文条目）' : ''}${inLibNote}`,
+        url: article.url,
         warn,
       });
     } catch (e) {
       if (e.kind === 'unavailable') {
         store.updateEvent(id, { status: 'pending_write', error: e.message });
-        this.hud({ type: 'result', ok: false, title: e.message.includes('没响应') ? 'Zotero 没响应' : 'Zotero 未运行', detail: '已暂存，恢复后自动补写（补写前先查重）' });
+        this.hud({ type: 'result', ok: false, title: e.message.includes('没响应') ? 'Zotero 没响应' : 'Zotero 未运行', detail: '已暂存，恢复后自动补写（补写前先查重）', url: article.url });
       } else {
         store.updateEvent(id, { status: 'failed', error: e.message });
-        this.hud({ type: 'result', ok: false, title: e.kind === 'auth' ? '未获授权' : '写入失败', detail: e.message.slice(0, 90) });
+        this.hud({ type: 'result', ok: false, title: e.kind === 'auth' ? '未获授权' : '写入失败', detail: e.message.slice(0, 90), url: article.url });
       }
     }
     this._broadcast();
@@ -862,10 +932,10 @@ class Engine extends EventEmitter {
       try {
         const itemKeys = await zotero.createItems([item]);
         store.updateEvent(id, { status: 'saved', itemKeys, paths: emptyCls.paths, keys });
-        this.hud({ type: 'result', ok: true, title: '已存入 Zotero（仅链接）', detail: `标题请手动补全${emptyCls.paths.length ? ` → ${emptyCls.paths.join('、')}` : ''}` });
+        this.hud({ type: 'result', ok: true, title: '已存入 Zotero（仅链接）', detail: `标题请手动补全${emptyCls.paths.length ? ` → ${emptyCls.paths.join('、')}` : ''}`, url: row.url });
       } catch (e) {
         store.updateEvent(id, { status: e.kind === 'unavailable' ? 'pending_write' : 'failed', error: e.message });
-        this.hud({ type: 'result', ok: false, title: '写入失败', detail: e.message.slice(0, 70) });
+        this.hud({ type: 'result', ok: false, title: '写入失败', detail: e.message.slice(0, 70), url: row.url });
       }
       this._broadcast();
       return;

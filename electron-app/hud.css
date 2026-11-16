@@ -53,3 +53,9 @@ button.b {
 button.b:hover { filter: brightness(1.12); }
 .b-ok { background: var(--accent); color: #fff; }
 .b-no { background: transparent; border: 1px solid var(--line); color: var(--sub); }
+/* 在浏览器打开：走主进程 shell.openExternal（只放行 http/https），点开系统默认浏览器 */
+.openlink {
+  color: var(--accent); font-size: 11px; cursor: pointer;
+  text-decoration: underline; display: inline-block; margin-top: 5px;
+}
+.openlink:hover { filter: brightness(1.25); }
