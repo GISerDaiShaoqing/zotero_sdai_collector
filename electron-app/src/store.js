@@ -22,6 +22,8 @@ const DEFAULT_CONFIG = {
   feishuAppId: '',
   feishuAppSecret: '',
   hudBg: '',          // 卡片窗（HUD）背景图绝对路径，空 = 纯色
+  panelFloat: false,  // 主面板悬浮置顶（面板标题栏 📌 开关，重启后保持）
+  ballPos: null,      // 悬浮小球位置（拖动后记忆；null = 默认右缘中部）
   followZoteroSelection: true, // Zotero 停在具体集合时直接存入该集合（5 分钟内有效）
 };
 

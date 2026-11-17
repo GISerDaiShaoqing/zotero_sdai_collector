@@ -1,0 +1,43 @@
+/* 悬浮小球样式。必须保持外部文件：页面 CSP 禁止内联 <style>。 */
+html, body { height: 100%; background: transparent; overflow: hidden; }
+* { margin: 0; box-sizing: border-box; }
+#ball {
+  position: relative;
+  width: 56px; height: 56px; border-radius: 50%;
+  /* 球面 = 应用图标本体（主进程注入 dataURL，圆形裁掉方角呈现「汇流 Z」；
+     sd 签名在方角处随裁切隐去，完整签名保留在软件图标里）。
+     图标加载前/失败时回落半透明纯色圆 */
+  background-color: rgba(21, 36, 47, .55);
+  background-size: 100% 100%;
+  background-position: center;
+  background-repeat: no-repeat;
+  border: 2px solid rgba(255, 255, 255, .38);
+  display: flex; align-items: center; justify-content: center;
+  -webkit-app-region: drag; cursor: grab; user-select: none;
+}
+#ball:active { cursor: grabbing; }
+/* 有待确认时红描边轻提示（数字在角标里） */
+#ball.alert {
+  border-color: rgba(255, 122, 89, .95);
+  box-shadow: 0 0 0 3px rgba(224, 83, 61, .35);
+}
+/* 暂停监听：灰化 + 一道斜杠（第三态，"还在收吗"一眼可辨） */
+#ball.paused { filter: grayscale(.9) brightness(.82); }
+#ball.paused::after {
+  content: ''; position: absolute; left: 8%; top: 50%; width: 84%; height: 4px;
+  border-radius: 2px; background: rgba(255, 255, 255, .85);
+  transform: rotate(-36deg); pointer-events: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .4);
+}
+.hit {
+  position: absolute; inset: 13px; border-radius: 50%;
+  -webkit-app-region: no-drag; cursor: pointer;
+}
+.badge {
+  position: absolute; top: -3px; right: -3px; min-width: 20px; height: 20px;
+  border-radius: 10px; background: #e0533d; color: #fff;
+  font-family: "Segoe UI", sans-serif; font-size: 11px; font-weight: 700; line-height: 1;
+  display: flex; align-items: center; justify-content: center; padding: 0 5px;
+  border: 1.5px solid rgba(255, 255, 255, .85); pointer-events: none;
+}
+.badge.hidden { display: none; }

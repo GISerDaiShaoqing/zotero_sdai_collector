@@ -33,10 +33,12 @@ function parseHintPaths(raw, url) {
   if (!text || !url) return [];
   const rest = text.split(url).join(' ').trim();
   if (!rest) return [];
+  // 网址片段不当集合名：混合消息里"另附的论文链接"此前会被当提示词去匹配，
+  // 卡片上出现"未命中：<网址>"噪声（同一链接已在论文流程里，不会丢）
   return rest
     .split(/[、，,；;｜|\n]+/)
     .map((s) => s.trim())
-    .filter((s) => s.length > 1);
+    .filter((s) => s.length > 1 && !/https?:\/\//i.test(s));
 }
 
 function start(appId, appSecret, onUrl) {

@@ -2,7 +2,9 @@
 :root {
   --bg: #15191f; --card: #232936; --line: #313947;
   --txt: #eef1f5; --sub: #98a2b3;
-  --green: #4ade80; --orange: #fbbf24; --red: #f87171; --accent: #6d8bff;
+  --green: #4ade80; --orange: #fbbf24; --red: #f87171;
+  /* 双色体系：accent 是"动作/链接"色，与主面板统一为靛蓝 #4f6ef2（深青留给品牌身份：图标/托盘/球/卡片底色） */
+  --accent: #4f6ef2;
 }
 * { box-sizing: border-box; margin: 0; }
 /* body 铺满整个窗口：背景图的定位区域跟随窗口而非内容高度，

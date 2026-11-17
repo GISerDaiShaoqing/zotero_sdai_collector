@@ -1,7 +1,7 @@
 {
   "name": "zotero-sdai-collector",
   "productName": "zotero_sdai_collector",
-  "description": "剪贴板/飞书捕获微信推送与论文直链，LLM 分类后写入 Zotero",
+  "description": "剪贴板/飞书捕获微信推送与论文链接（含裸 DOI），LLM 分类后写入 Zotero",
   "author": {
     "name": "Shaoqing Dai",
     "email": "shaoqing.dai@outlook.com"
@@ -10,7 +10,7 @@
     "type": "git",
     "url": "https://github.com/GISerDaiShaoqing/zotero_sdai_collector.git"
   },
-  "version": "1.2.9",
+  "version": "1.2.10",
   "private": true,
   "main": "main.js",
   "scripts": {
@@ -29,6 +29,9 @@
       "hud.html",
       "hud.css",
       "hud.js",
+      "ball.html",
+      "ball.css",
+      "ball.js",
       "renderer/**",
       "src/**",
       "seed/**",

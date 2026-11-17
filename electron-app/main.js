@@ -10,6 +10,7 @@ const extract = require('./src/extract');
 
 let panel = null;
 let hud = null;
+let ball = null;
 let tray = null;
 let paused = false;
 let quitting = false;
@@ -36,10 +37,15 @@ if (!app.requestSingleInstanceLock()) {
     await engine.init();
     createPanel();
     createHud();
+    createBall();
     createTray();
     startClipboardPolling();
     engine.syncFeishu();
-    engine.on('update', () => panel && !panel.isDestroyed() && panel.webContents.send('state', snapshot()));
+    engine.on('update', () => {
+      const snap = snapshot();
+      if (panel && !panel.isDestroyed()) panel.webContents.send('state', snap);
+      sendBallState(snap);
+    });
     engine.on('hud', (p) => {
       if (hud && !hud.isDestroyed()) {
         resetHudSize();
@@ -62,6 +68,19 @@ function showPanel() {
     panel.show();
     panel.focus();
   }
+  syncBallWithPanel();
+}
+
+// 球与面板互斥：面板在屏（含最小化到任务栏）时收球，面板收起（缩托盘）时亮球。
+// 收纳态即球态——红角标正好在"你不在面板前"的时候告诉你有卡片待确认
+function syncBallWithPanel() {
+  if (!ball || ball.isDestroyed()) return;
+  const onScreen = !!(panel && !panel.isDestroyed() && panel.isVisible() && !panel.isMinimized());
+  if (onScreen) {
+    if (ball.isVisible()) ball.hide();
+  } else if (!ball.isVisible()) {
+    ball.showInactive();
+  }
 }
 
 function createPanel() {
@@ -70,6 +89,8 @@ function createPanel() {
     title: 'zotero_sdai_collector',
     icon: ICON,
     autoHideMenuBar: true,
+    // 悬浮置顶（面板 📌 开关记忆）：级别用 floating，低于卡片窗的 screen-saver——卡片始终压在面板上
+    alwaysOnTop: !!store.getConfig().panelFloat,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   });
   panel.loadFile(path.join(__dirname, 'renderer', 'index.html'));
@@ -86,6 +107,8 @@ function createPanel() {
       panel.hide();
     }
   });
+  // 球随面板收放：面板 show/hide/minimize/restore 都同步球的显隐（互斥态）
+  for (const ev of ['show', 'hide', 'minimize', 'restore']) panel.on(ev, syncBallWithPanel);
 }
 
 const HUD_W = 340;
@@ -129,6 +152,84 @@ function resetHudSize() {
   if (hud && !hud.isDestroyed()) hud.setBounds(hudBounds(96));
 }
 
+// ---- 悬浮小球 ----
+const BALL_W = 56;
+
+// 初始/恢复位置：用记忆点，夹取到工作区内（换分辨率/拔显示器时防丢）
+function ballBounds() {
+  const wa = screen.getPrimaryDisplay().workArea;
+  const p = store.getConfig().ballPos;
+  const x = p && Number.isFinite(p.x) ? p.x : wa.x + wa.width - 72;
+  const y = p && Number.isFinite(p.y) ? p.y : wa.y + Math.round(wa.height / 2) - 28;
+  return {
+    x: Math.round(Math.min(Math.max(wa.x, x), wa.x + wa.width - BALL_W)),
+    y: Math.round(Math.min(Math.max(wa.y, y), wa.y + wa.height - BALL_W)),
+    width: BALL_W, height: BALL_W,
+  };
+}
+
+function createBall() {
+  ball = new BrowserWindow({
+    ...ballBounds(),
+    frame: false, transparent: true, hasShadow: false, resizable: false, skipTaskbar: true,
+    // backgroundColor 透明：不写这个，Windows 上"创建时隐藏+事后 showInactive"的透明窗会
+    // 出现"窗口在但内容永远不画"的坑（实测小球隐形的根源）
+    backgroundColor: '#00000000',
+    alwaysOnTop: true, show: false, icon: ICON,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+  });
+  // floating 级：高于普通窗口，低于卡片窗的 screen-saver——确认卡永远压在小球上
+  ball.setAlwaysOnTop(true, 'floating');
+  ball.webContents.on('did-finish-load', () => {
+    sendBallState();
+    sendBallIcon();
+    // 面板开着就不亮球（互斥态；渲染异常恢复重载时同理）
+    syncBallWithPanel();
+    try {
+      const b = ball.getBounds();
+      mainLog(`悬浮小球就绪：(${b.x},${b.y}) ${b.width}×${b.height}`);
+    } catch {}
+  });
+  // 看护同卡片窗（V1.2.7 教训）：小球渲染进程死了就是透明空壳，用户只会觉得"小球消失了"
+  ball.webContents.on('render-process-gone', (_e, d) => {
+    mainLog(`悬浮小球渲染进程异常退出（reason=${d.reason} exitCode=${d.exitCode}）`);
+    if (d.reason !== 'clean-exit') {
+      try { ball.webContents.reload(); } catch {}
+    }
+  });
+  ball.loadFile(path.join(__dirname, 'ball.html'));
+  // 拖动结束记位（moved 连发，去抖落盘）
+  let moveTimer = null;
+  ball.on('moved', () => {
+    clearTimeout(moveTimer);
+    moveTimer = setTimeout(() => {
+      try {
+        const b = ball.getBounds();
+        store.setConfig({ ballPos: { x: b.x, y: b.y } });
+      } catch {}
+    }, 600);
+  });
+}
+
+// 小球角标状态：待确认数>0 红标描边
+function sendBallState(snap) {
+  if (!ball || ball.isDestroyed()) return;
+  try {
+    const s = (snap || snapshot()).status;
+    ball.webContents.send('ball-state', { nPending: s.nPending, listening: s.listening });
+  } catch {}
+}
+
+// 球面 = 应用图标本体（主进程读 icon.png 转 dataURL 注入，同 HUD 背景图的机制；
+// 圆形裁掉方角后呈现「汇流 Z」，sd 签名留在软件图标本体里）
+function sendBallIcon() {
+  if (!ball || ball.isDestroyed()) return;
+  try {
+    const buf = fs.readFileSync(path.join(__dirname, 'assets', 'icon.png'));
+    ball.webContents.send('ball-icon', `data:image/png;base64,${buf.toString('base64')}`);
+  } catch {}
+}
+
 const IMG_EXT = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp' };
 
 function sendHudBg() {
@@ -146,19 +247,34 @@ function sendHudBg() {
   hud.webContents.send('hud-bg', dataUrl);
 }
 
-function createTray() {
-  const icon = nativeImage.createFromPath(ICON).resize({ width: 32, height: 32 });
-  tray = new Tray(icon);
-  tray.setToolTip('zotero_sdai_collector — 复制微信文章链接即可收集');
-  const menu = Menu.buildFromTemplate([
+// 手动重启：pending 状态全部落盘、确认卡启动时自动重弹（V1.2.7），重启零损失
+function restartApp() {
+  mainLog('手动重启应用');
+  quitting = true;
+  try { engine.dispose(); } catch {}
+  if (pollTimer) clearInterval(pollTimer);
+  app.relaunch();
+  app.exit(0);
+}
+
+// 托盘菜单统一在此生成（暂停/恢复的文案随 paused 变化，togglePause 重建时复用）
+function buildTrayMenu() {
+  return Menu.buildFromTemplate([
+    { label: paused ? '恢复监听' : '暂停监听', click: togglePause },
     { label: '显示面板', click: showPanel },
-    { label: '暂停监听', id: 'pause', click: togglePause },
     { label: '重弹待确认', click: () => engine.reconfirmPending() },
+    { label: '重启应用', click: restartApp },
     { label: '关于', click: openAbout },
     { type: 'separator' },
     { label: '退出', click: () => { quitting = true; app.quit(); } },
   ]);
-  tray.setContextMenu(menu);
+}
+
+function createTray() {
+  const icon = nativeImage.createFromPath(ICON).resize({ width: 32, height: 32 });
+  tray = new Tray(icon);
+  tray.setToolTip('zotero_sdai_collector — 复制微信文章链接即可收集');
+  tray.setContextMenu(buildTrayMenu());
   tray.on('click', showPanel);
 }
 
@@ -170,21 +286,14 @@ function openAbout() {
 function togglePause() {
   paused = !paused;
   engine.paused = paused;
-  if (tray) {
-    tray.setContextMenu(Menu.buildFromTemplate([
-      { label: paused ? '恢复监听' : '暂停监听', click: togglePause },
-      { label: '显示面板', click: showPanel },
-      { label: '重弹待确认', click: () => engine.reconfirmPending() },
-      { label: '关于', click: openAbout },
-      { type: 'separator' },
-      { label: '退出', click: () => { quitting = true; app.quit(); } },
-    ]));
-  }
+  if (tray) tray.setContextMenu(buildTrayMenu());
   broadcast();
 }
 
 function broadcast() {
-  if (panel && !panel.isDestroyed()) panel.webContents.send('state', snapshot());
+  const snap = snapshot();
+  if (panel && !panel.isDestroyed()) panel.webContents.send('state', snap);
+  sendBallState(snap);
 }
 
 // ---- 剪贴板轮询（1 秒；Electron 45 起 readText 为异步 API）----
@@ -257,6 +366,21 @@ ipcMain.handle('choose', (e, { id, action, paths }) => {
 ipcMain.handle('hud-hide', () => {
   if (hud && !hud.isDestroyed()) hud.hide();
 });
+ipcMain.handle('ball-click', () => {
+  // 点击球 = 展开主面板（球随面板显隐自动退场，不再需要手动切换）
+  showPanel();
+});
+// 右键小球：托盘同款快捷菜单（每次弹出时现建，暂停/恢复文案随当前状态变）
+ipcMain.handle('ball-menu', () => {
+  Menu.buildFromTemplate([
+    { label: '显示主面板', click: showPanel },
+    { label: '重弹待确认', click: () => engine.reconfirmPending() },
+    { label: paused ? '恢复监听' : '暂停监听', click: togglePause },
+    { label: '重启应用', click: restartApp },
+    { type: 'separator' },
+    { label: '退出', click: () => { quitting = true; app.quit(); } },
+  ]).popup({ window: ball });
+});
 // 渲染进程报内容高度 → 夹取后按右下角重新贴靠
 ipcMain.on('hud-resize', (e, h) => {
   if (!hud || hud.isDestroyed()) return;
@@ -283,8 +407,15 @@ ipcMain.handle('quit', () => {
   quitting = true;
   app.quit();
 });
+ipcMain.handle('restart', restartApp);
+ipcMain.handle('set-float', (e, v) => {
+  const cfg = store.setConfig({ panelFloat: !!v });
+  if (panel && !panel.isDestroyed()) panel.setAlwaysOnTop(!!cfg.panelFloat, 'floating');
+  return cfg;
+});
 ipcMain.handle('open-url', (e, url) => {
-  if (typeof url === 'string' && /^https?:\/\//.test(url)) shell.openExternal(url);
+  // 只放行 http(s) 与 zotero://select（跳到库内指定条目），其余协议一律不开
+  if (typeof url === 'string' && (/^https?:\/\//i.test(url) || /^zotero:\/\/select\//.test(url))) shell.openExternal(url);
 });
 // 检查更新：查 GitHub Releases 最新版本；仓库未发布/网络不通时温和降级
 function isNewer(a, b) {

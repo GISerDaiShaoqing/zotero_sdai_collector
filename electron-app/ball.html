@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <!-- 透明无边框小窗；img-src data: 放行球面图标（主进程读 icon.png 注入），脚本/样式仍锁死 -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'" />
+  <link rel="stylesheet" href="ball.css" />
+  <title>ball</title>
+</head>
+<body>
+  <!-- 外圈拖动移位、中心点击展开/收起主面板（拖/点分离是悬浮球的标准手感） -->
+  <div id="ball" title="中心点击收起/展开主面板；按住边缘拖动位置">
+    <div class="hit" id="hit"></div>
+    <span class="badge hidden" id="badge">0</span>
+  </div>
+  <script src="ball.js"></script>
+</body>
+</html>

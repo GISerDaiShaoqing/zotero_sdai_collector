@@ -74,6 +74,7 @@ function renderEvents(events) {
         ${err}
       </div>
       <a class="ev-open" title="在浏览器打开" data-url="${esc(e.url)}">↗</a>
+      ${e.itemKeys && e.itemKeys.length ? `<a class="ev-open" title="在 Zotero 中查看" data-zkey="${esc(e.itemKeys[0])}">📚</a>` : ''}
       <span class="pill ${e.status}">${STATUS_TEXT[e.status] || esc(e.status)}</span>
     </div>`;
   }).join('');
@@ -117,10 +118,26 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (cfg) cfg._nCollections = snap.status.nCollections;
   });
 
-  // 记录行 ↗：系统默认浏览器打开原链接（主进程只放行 http/https，防任意协议注入）
+  // 面板 📌：悬浮置顶开关（状态存配置，重启保持；级别低于卡片窗，卡片始终压在面板上）
+  $('floatBtn').classList.toggle('on', !!(cfg && cfg.panelFloat));
+  $('floatBtn').onclick = async () => {
+    cfg = await window.api.setFloat(!(cfg && cfg.panelFloat));
+    $('floatBtn').classList.toggle('on', !!cfg.panelFloat);
+    toast(cfg.panelFloat ? '面板已悬浮置顶（再点一次取消）' : '已取消悬浮置顶');
+  };
+  // 重启：待确认状态已落盘、确认卡启动自动重弹，零损失
+  $('restartBtn').onclick = async () => {
+    toast('正在重启…待确认卡片会自动重弹');
+    await window.api.restart();
+  };
+
+  // 记录行 ↗/📚：默认浏览器打开原链接（http/https）或 zotero://select 深链跳到库内条目；
+  // 主进程只放行这两种协议，防任意协议注入
   $('list').addEventListener('click', (e) => {
     const a = e.target.closest('.ev-open');
-    if (a && a.dataset.url) window.api.openUrl(a.dataset.url);
+    if (!a) return;
+    if (a.dataset.url) window.api.openUrl(a.dataset.url);
+    else if (a.dataset.zkey) window.api.openUrl('zotero://select/library/items/' + a.dataset.zkey);
   });
 
   $('settingsBtn').onclick = async () => {

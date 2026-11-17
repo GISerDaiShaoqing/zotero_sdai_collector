@@ -30,10 +30,13 @@ function addResultCard(p) {
         ${p.detail ? `<div class="d">${esc(p.detail)}</div>` : ''}
         ${p.warn ? `<div class="d warnline">⚠️ ${esc(p.warn)}</div>` : ''}
         ${p.url ? `<a class="openlink" data-url="${esc(p.url)}">在浏览器打开 ↗</a>` : ''}
+        ${p.itemKeys && p.itemKeys.length ? `<a class="openlink" data-zkey="${esc(p.itemKeys[0])}">在 Zotero 中查看 📚</a>` : ''}
       </div>
     </div>`;
-  const link = el.querySelector('.openlink');
+  const link = el.querySelector('.openlink[data-url]');
   if (link) link.onclick = (ev) => { ev.preventDefault(); window.api.openUrl(p.url); };
+  const zlink = el.querySelector('.openlink[data-zkey]');
+  if (zlink) zlink.onclick = (ev) => { ev.preventDefault(); window.api.openUrl('zotero://select/library/items/' + zlink.dataset.zkey); };
   document.body.appendChild(el);
   fit();
   setTimeout(() => {

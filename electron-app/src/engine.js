@@ -553,14 +553,23 @@ class Engine extends EventEmitter {
           }
         }
         if (kept.length) await zotero.connectorSave(kept);
+        // connector 协议不回条目 key：存完逐条反查补上，卡片/面板才有"在 Zotero 中查看"跳转
+        let newKeys = [];
+        try {
+          for (const it of kept) {
+            if (!it.url) continue;
+            const hit = await zotero.recentUrlExists(it.url);
+            if (hit) newKeys.push(hit.key);
+          }
+        } catch {}
         const warn = this._paperWarn(article, meta, paperUrl);
         const selPath = this._selectionPath(sel);
         store.updateEvent(ev.id, {
-          status: 'saved', via: 'confirm', paths: [selPath], keys: [],
+          status: 'saved', via: 'confirm', paths: [selPath], keys: [], itemKeys: newKeys,
           payload: JSON.stringify({ article, classification: { paths: [selPath], keys: [], confidence: 1, isPaper: !!meta, paperTitleGuess: '' }, meta, warn }),
         });
         this.log(`按选中集合直存：${selPath}`);
-        this.hud({ type: 'result', ok: true, title: '已存入 Zotero', detail: `${article.title.slice(0, 36)} → ${selPath}${paperSkipped ? '（配对论文已在库，未重复写入）' : ''}`, url, warn });
+        this.hud({ type: 'result', ok: true, title: '已存入 Zotero', detail: `${article.title.slice(0, 36)} → ${selPath}${paperSkipped ? '（配对论文已在库，未重复写入）' : ''}`, url, itemKeys: newKeys, warn });
         this._feishuPaperReply(url, meta, warn);
         this._broadcast();
         return;
@@ -695,12 +704,18 @@ class Engine extends EventEmitter {
           return;
         }
         await zotero.connectorSave([this._paperItem(meta, [])]);
+        // connector 协议不回条目 key：存完反查一次补上（查不到就少个跳转把手，不影响保存）
+        let newKeys = [];
+        try {
+          const hit = meta.url ? await zotero.recentUrlExists(meta.url) : null;
+          if (hit) newKeys = [hit.key];
+        } catch {}
         store.updateEvent(ev.id, {
-          status: 'saved', via: 'confirm', paths: [selPath], keys: [],
+          status: 'saved', via: 'confirm', paths: [selPath], keys: [], itemKeys: newKeys,
           payload: JSON.stringify({ article: pseudo, classification: { paths: [selPath], keys: [], confidence: 1, isPaper: true, paperTitleGuess: '' }, meta }),
         });
         this.log(`按选中集合直存论文：${selPath}`);
-        this.hud({ type: 'result', ok: true, title: '已存入 Zotero', detail: `${meta.title.slice(0, 36)} → ${selPath}` });
+        this.hud({ type: 'result', ok: true, title: '已存入 Zotero', detail: `${meta.title.slice(0, 36)} → ${selPath}`, url, itemKeys: newKeys });
         this._broadcast();
         return;
       }
@@ -867,9 +882,11 @@ class Engine extends EventEmitter {
     if (!toWrite.length) {
       // 全部条目都已在库 → 整条标已存（此前写入其实已生效）；顺带提示它们挂在哪些集合
       const inLib = [...new Set(inLibrary.flatMap((it) => this._existingCollectionPaths(it)))].slice(0, 3);
-      store.updateEvent(id, { status: 'saved', itemKeys: [], via });
+      const libKeys = inLibrary.map((it) => it.key).filter(Boolean);
+      store.updateEvent(id, { status: 'saved', itemKeys: libKeys, via });
       this.hud({
         type: 'result', ok: true, title: '已在库中，跳过', url: article.url,
+        itemKeys: libKeys,
         detail: `${items[0].title.slice(0, 44)}（此前写入其实已生效${inLib.length ? `｜ 库中分类：${inLib.join('、')}` : ''}）`,
       });
       this._broadcast();
@@ -890,6 +907,7 @@ class Engine extends EventEmitter {
         type: 'result', ok: true, title: '已存入 Zotero',
         detail: `${article.title.slice(0, 40)} → ${cls.paths.join('、') || '（未归集合）'}${!paperOnly && meta ? '（含论文条目）' : ''}${inLibNote}`,
         url: article.url,
+        itemKeys: [...itemKeys, ...inLibrary.map((it) => it.key).filter(Boolean)],
         warn,
       });
     } catch (e) {
@@ -932,7 +950,7 @@ class Engine extends EventEmitter {
       try {
         const itemKeys = await zotero.createItems([item]);
         store.updateEvent(id, { status: 'saved', itemKeys, paths: emptyCls.paths, keys });
-        this.hud({ type: 'result', ok: true, title: '已存入 Zotero（仅链接）', detail: `标题请手动补全${emptyCls.paths.length ? ` → ${emptyCls.paths.join('、')}` : ''}`, url: row.url });
+        this.hud({ type: 'result', ok: true, title: '已存入 Zotero（仅链接）', detail: `标题请手动补全${emptyCls.paths.length ? ` → ${emptyCls.paths.join('、')}` : ''}`, url: row.url, itemKeys });
       } catch (e) {
         store.updateEvent(id, { status: e.kind === 'unavailable' ? 'pending_write' : 'failed', error: e.message });
         this.hud({ type: 'result', ok: false, title: '写入失败', detail: e.message.slice(0, 70), url: row.url });
