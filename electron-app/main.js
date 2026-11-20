@@ -1,5 +1,6 @@
 // 应用生命周期：托盘常驻、主面板窗口、右下角卡片窗（HUD）、IPC 桥接、剪贴板轮询。
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen, clipboard, dialog, shell } = require('electron');
+const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -247,14 +248,33 @@ function sendHudBg() {
   hud.webContents.send('hud-bg', dataUrl);
 }
 
-// 手动重启：pending 状态全部落盘、确认卡启动时自动重弹（V1.2.7），重启零损失
+// 手动重启：pending 状态全部落盘、确认卡启动时自动重弹（V1.2.7），重启零损失。
+// Windows 下不能用 app.relaunch：其 relauncher 助手只能拉起 Electron 自身，而便携版真正的
+// 入口是 NSIS 包装器（普通 exe），指向它会静默失败（现象即"点重启后应用消失"）；且包装器
+// 退出时会删除 %TEMP% 解包目录（portable.nsi 的 RMDir /r），默认 relaunch 目标（内层 exe）
+// 正在其中。改为分离式直接 spawn 新实例：包装器重新解包到各自独立的随机目录，互不干扰，
+// 且新实例要等解包完成才启动，此时旧进程早已退出、单实例锁已释放；主进程稍后自行退出。
+// 非 Windows 平台 relauncher 无此限制，仍走 relaunch。
 function restartApp() {
   mainLog('手动重启应用');
   quitting = true;
   try { engine.dispose(); } catch {}
   if (pollTimer) clearInterval(pollTimer);
-  app.relaunch();
-  app.exit(0);
+  if (process.platform === 'win32') {
+    const portableExe = process.env.PORTABLE_EXECUTABLE_FILE;
+    const exe = (portableExe && fs.existsSync(portableExe)) ? portableExe : process.execPath;
+    const args = (exe === process.execPath && !app.isPackaged) ? [app.getAppPath()] : [];
+    mainLog(`重启目标：${exe}${args.length ? ' ' + args.join(' ') : ''}`);
+    try {
+      spawn(exe, args, { detached: true, stdio: 'ignore', windowsHide: true });
+    } catch (e) {
+      mainLog('重启拉起新实例失败：' + (e && e.message));
+    }
+    setTimeout(() => app.exit(0), 400);
+  } else {
+    app.relaunch();
+    app.exit(0);
+  }
 }
 
 // 托盘菜单统一在此生成（暂停/恢复的文案随 paused 变化，togglePause 重建时复用）
