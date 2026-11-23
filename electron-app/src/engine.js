@@ -16,6 +16,7 @@ const TREE_CACHE = path.join(store.DATA_DIR, 'collections_cache.json');
 
 function kindOf(url) {
   if (/mp\.weixin\.qq\.com/i.test(url)) return 'wechat';
+  if (extract.isXhsUrl(url)) return 'xhs';
   if (extract.isPaperUrl(url)) return 'paper';
   return 'unknown';
 }
@@ -161,6 +162,7 @@ class Engine extends EventEmitter {
   _resolveHints(hints) {
     const norm = (s) => String(s).toLowerCase().replace(/[\s\-_]+/g, '');
     const resolved = [], missed = [], ambiguous = [];
+    let firstAmb = null;
     for (const h0 of hints || []) {
       const h = String(h0).trim();
       if (!h) continue;
@@ -170,6 +172,19 @@ class Engine extends EventEmitter {
         if (!nv) continue;
         const hasCjk = /[\u4e00-\u9fff]/.test(nv);
         let hits = this.tree.filter((c) => norm(c.name) === nv || norm(c.path) === nv);
+        // 父路径限定（"Healthy/Background"）：按 / 分段做尾段序列精确匹配。
+        // 多个同名细分类（多个 Background）时，两段式父路径写法在下面的包含级必然全歧义
+        // （"healthy/background".includes("background") 三兄弟全中），只有分段匹配能唯一定位；
+        // 名字本身带斜杠的集合（如 DT/3DCV/WM/AD/VLA）分段不命中会自然回落包含级，行为不变
+        if (!hits.length && v.includes('/')) {
+          const segs = v.split('/').map(norm).filter(Boolean);
+          if (segs.length > 1) {
+            hits = this.tree.filter((c) => {
+              const ps = norm(c.path).split('/').filter(Boolean);
+              return ps.length >= segs.length && segs.every((sg, i) => ps[ps.length - segs.length + i] === sg);
+            });
+          }
+        }
         // 包含级：纯 ASCII 短词（如 "RS"）不参与，避免泛匹配刷屏
         if (!hits.length && (nv.length >= 3 || (hasCjk && nv.length >= 2))) {
           hits = this.tree.filter((c) => {
@@ -183,13 +198,17 @@ class Engine extends EventEmitter {
         }
         if (hits.length === 1) { resolved.push(hits[0]); done = true; break; }
         if (hits.length > 1) {
-          // 同名/包含命中去重后列候选；同名靠父路径消歧
-          const optKeys = [...new Set(hits.map((c) => c.key))];
-          ambiguous.push({ hint: v, options: optKeys.map((k) => this.tree.find((c) => c.key === k).path) });
-          done = true;
-          break;
+          // 同名/包含命中去重后列候选；同名靠父路径消歧。
+          // 不立即判死：带引导词的原始串（"进 Healthy/Background"）在包含级必然歧义，
+          // 剥掉引导词的干净变体可能经分段匹配唯一命中——唯一命中优先于歧义
+          if (!firstAmb) {
+            const optKeys = [...new Set(hits.map((c) => c.key))];
+            firstAmb = { hint: v, options: optKeys.map((k) => this.tree.find((c) => c.key === k).path) };
+          }
+          continue;
         }
       }
+      if (!done && firstAmb) { ambiguous.push(firstAmb); done = true; }
       if (!done) missed.push(h);
     }
     const uniq = resolved.filter((c, i) => resolved.findIndex((x) => x.key === c.key) === i);
@@ -242,6 +261,20 @@ class Engine extends EventEmitter {
       ? `📎 已识别论文：《${String(meta.title).slice(0, 40)}》，与文章一起处理`
       : (warn ? `⚠️ ${warn}` : '');
     if (text) feishu.notifyFor(url, text);
+  }
+
+  // 小红书链接（V1.3）：不入库、不抓取、不分类——只捕获留档 + 卡片/面板一键浏览器打开。
+  // 实测不登录服务端抓不到笔记元数据（只回通用壳页），抓取方案没有可行性。
+  // 刻意不做 Zotero 查重门（xhs 链接永不入库，查了是浪费）；重复捕获靠 10 分钟 DUP_WINDOW。
+  _processXhsUrl(url) {
+    store.addEvent({ url, kind: 'xhs', status: 'captured' });
+    this.log(`捕获小红书链接：${url}`);
+    this.hud({
+      type: 'result', ok: true, title: '已捕获小红书链接', url,
+      detail: '在浏览器打开定位文献；找到论文直链或 DOI 后发回即可入库',
+    });
+    feishu.notifyFor(url, '✅ 已捕获小红书链接，桌面端面板/卡片可一键打开');
+    this._broadcast();
   }
 
   // ---- 入口 ----
@@ -367,6 +400,17 @@ class Engine extends EventEmitter {
     this._broadcast();
   }
 
+  // 行内"重发"：失败行一键重新入队。enqueueUrl 的 10 分钟去重窗口只挡
+  // pending/saved 等活跃前行（engine.js 去重分支放行 failed/ignored），无需 force 通道。
+  // 旧行保留作历史，新尝试生成新事件行。
+  resendEvent(id) {
+    const row = store.byId(id);
+    if (!row || !row.url) return false;
+    this.log(`重发链接：${row.url}`);
+    this.enqueueUrl(row.url);
+    return true;
+  }
+
   reconfirmPending() {
     for (const row of store.byStatus('pending')) {
       let p = {};
@@ -397,7 +441,9 @@ class Engine extends EventEmitter {
       try {
         if (job.type === 'url') {
           const kind = kindOf(job.url);
-          taskP = kind === 'paper' ? this._processPaperUrl(job.url, job.hints) : this._processUrl(job.url, job.hints, job.paperUrl || '');
+          taskP = kind === 'paper' ? this._processPaperUrl(job.url, job.hints)
+            : kind === 'xhs' ? this._processXhsUrl(job.url)
+            : this._processUrl(job.url, job.hints, job.paperUrl || '');
         }
         else if (job.type === 'confirm') taskP = this._writePending(job.id, job.paths, job.via);
       } catch (e) {

@@ -89,6 +89,10 @@ function byStatus(st) {
   return state.events.filter((e) => e.status === st);
 }
 
+function byId(id) {
+  return state.events.find((e) => e.id === id) || null;
+}
+
 function recent(n = 60) {
   return state.events.slice(-n).reverse();
 }
@@ -108,4 +112,4 @@ function setConfig(patch) {
   return getConfig();
 }
 
-module.exports = { init, addEvent, updateEvent, findSaved, byStatus, recent, clearEvents, getConfig, setConfig, DATA_DIR };
+module.exports = { init, addEvent, updateEvent, findSaved, byStatus, byId, recent, clearEvents, getConfig, setConfig, DATA_DIR };

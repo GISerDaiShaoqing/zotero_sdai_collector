@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('api', {
   setPaused: (p) => ipcRenderer.invoke('set-paused', p),
   refreshCollections: () => ipcRenderer.invoke('refresh-collections'),
   reconfirm: () => ipcRenderer.invoke('reconfirm'),
+  resendEvent: (id) => ipcRenderer.invoke('resend-event', id),
   clearHistory: () => ipcRenderer.invoke('clear-history'),
   saveConfig: (c) => ipcRenderer.invoke('save-config', c),
   authorize: () => ipcRenderer.invoke('authorize'),

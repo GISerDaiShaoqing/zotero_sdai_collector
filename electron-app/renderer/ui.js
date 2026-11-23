@@ -3,11 +3,16 @@ const $ = (id) => document.getElementById(id);
 
 const STATUS_TEXT = {
   new: '处理中…', pending: '待确认', saved: '已存入', ignored: '已忽略',
-  failed: '失败', pending_write: '待写入',
+  failed: '失败', pending_write: '待写入', captured: '已捕获',
 };
 let cfg = null;
 let authorized = false;
 let appVersion = '';
+// 记录筛选（V1.3）：快照事件先存 allEvents，按类型/状态过滤后渲染（纯前端，无后端改动）
+let allEvents = [];
+let filterKind = 'all';
+let filterStatus = 'all';
+const ACTIVE_STATUSES = ['new', 'pending', 'pending_write'];
 
 function timeStr(ts) {
   const d = new Date(ts);
@@ -52,18 +57,29 @@ function paperMark(e) {
   return { cls: 'none', text: '无论文' };
 }
 
-function renderEvents(events) {
+function applyFilter() {
+  const evs = allEvents.filter((e) => {
+    if (filterKind !== 'all' && e.kind !== filterKind) return false;
+    if (filterStatus !== 'all') {
+      if (filterStatus === 'active') { if (!ACTIVE_STATUSES.includes(e.status)) return false; }
+      else if (e.status !== filterStatus) return false;
+    }
+    return true;
+  });
   const list = $('list');
-  if (!events.length) {
-    list.innerHTML = '<div class="empty">还没有记录<br/>去微信复制一篇公众号文章链接试试</div>';
+  if (!evs.length) {
+    list.innerHTML = allEvents.length
+      ? '<div class="empty">没有匹配的记录<br/>试试放宽类型/状态筛选</div>'
+      : '<div class="empty">还没有记录<br/>去微信复制一篇公众号文章链接试试</div>';
     return;
   }
-  list.innerHTML = events.map((e) => {
+  list.innerHTML = evs.map((e) => {
     const tags = (e.paths || []).map((p) => `<span class="tag">${esc(p)}</span>`).join('');
     const err = e.error && e.status === 'failed' ? `<div class="ev-error">${esc(e.error)}</div>` : '';
     const meta = [e.blogTitle, e.publishDate].filter(Boolean).join(' · ');
     const pm = paperMark(e);
     const paperLine = pm ? `<div class="ev-paper ${pm.cls}">${esc(pm.text)}</div>` : '';
+    const xhsLine = e.kind === 'xhs' ? '<div class="ev-paper warn">📕 小红书 · 点 ↗ 在浏览器打开</div>' : '';
     return `<div class="ev">
       <div class="ev-time">${timeStr(e.createdAt)}</div>
       <div class="ev-main">
@@ -71,13 +87,20 @@ function renderEvents(events) {
         <div class="ev-meta">${esc(meta)}</div>
         ${tags ? `<div class="ev-collections">${tags}</div>` : ''}
         ${paperLine}
+        ${xhsLine}
         ${err}
       </div>
       <a class="ev-open" title="在浏览器打开" data-url="${esc(e.url)}">↗</a>
+      ${e.status === 'failed' && e.url ? `<a class="ev-open" title="重发该链接（重新走流程）" data-resend="${e.id}">↻</a>` : ''}
       ${e.itemKeys && e.itemKeys.length ? `<a class="ev-open" title="在 Zotero 中查看" data-zkey="${esc(e.itemKeys[0])}">📚</a>` : ''}
       <span class="pill ${e.status}">${STATUS_TEXT[e.status] || esc(e.status)}</span>
     </div>`;
   }).join('');
+}
+
+function renderEvents(events) {
+  allEvents = events || [];
+  applyFilter();
 }
 
 function toast(msg) {
@@ -131,14 +154,21 @@ window.addEventListener('DOMContentLoaded', async () => {
     await window.api.restart();
   };
 
-  // 记录行 ↗/📚：默认浏览器打开原链接（http/https）或 zotero://select 深链跳到库内条目；
-  // 主进程只放行这两种协议，防任意协议注入
-  $('list').addEventListener('click', (e) => {
+  // 记录行 ↗/📚/↻：默认浏览器打开原链接（http/https）、zotero://select 深链跳到库内条目、
+  // 失败行一键重发（重新入队走完整流程）；主进程只放行这两种协议，防任意协议注入
+  $('list').addEventListener('click', async (e) => {
     const a = e.target.closest('.ev-open');
     if (!a) return;
-    if (a.dataset.url) window.api.openUrl(a.dataset.url);
+    if (a.dataset.resend) {
+      const ok = await window.api.resendEvent(a.dataset.resend);
+      toast(ok ? '已重新入队处理' : '该记录没有可重发的链接');
+    } else if (a.dataset.url) window.api.openUrl(a.dataset.url);
     else if (a.dataset.zkey) window.api.openUrl('zotero://select/library/items/' + a.dataset.zkey);
   });
+
+  // 记录筛选（类型/状态），纯前端过滤当前快照
+  $('filterKind').onchange = (e) => { filterKind = e.target.value; applyFilter(); };
+  $('filterStatus').onchange = (e) => { filterStatus = e.target.value; applyFilter(); };
 
   $('settingsBtn').onclick = async () => {
     cfg = await window.api.getConfig();

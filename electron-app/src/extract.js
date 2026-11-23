@@ -11,6 +11,10 @@ const PAPER_HOSTS = [
   'pubmed.ncbi.nlm.nih.gov', 'researchgate.net', 'cnki.net', 'cnki.com.cn', 'wanfangdata.com.cn',
 ];
 
+// 社交平台链接（V1.3：小红书）——不入库、不抓取，仅捕获后在面板/卡片一键浏览器打开。
+// 实测不登录服务端只能拿到通用壳页（无笔记元数据），所以只做链接直通
+const XHS_HOSTS = ['xiaohongshu.com', 'xhslink.com'];
+
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 class FetchError extends Error {}
@@ -39,9 +43,18 @@ function unesc(s) {
 const ARXIV_URL_RE = /arxiv\.org\/(?:abs|pdf)\/([0-9]{4}\.[0-9]{4,5}(?:v\d+)?|[a-z\-]+(?:\.[A-Z]{2})?\/\d{7})/i;
 const DOI_URL_RE = /doi\.org\/(10\.\d{4,9}\/[^\s?#"'<>]+)/i;
 
+function isXhsUrl(url) {
+  try {
+    const h = new URL(url).hostname.toLowerCase();
+    return XHS_HOSTS.some((k) => h === k || h.endsWith('.' + k));
+  } catch {
+    return false; // 无协议/非 URL 文本不算（与全应用"链接须带协议"规则一致）
+  }
+}
+
 function isPaperUrl(url) {
   const u = url || '';
-  if (/mp\.weixin\.qq\.com/i.test(u)) return false;
+  if (/mp\.weixin\.qq\.com/i.test(u) || isXhsUrl(u)) return false;
   return ARXIV_URL_RE.test(u) || DOI_URL_RE.test(u) || PAPER_HOSTS.some((k) => u.includes(k));
 }
 
@@ -79,7 +92,7 @@ function paperUrls(text) {
   for (const m of t.matchAll(MSG_URL_OR_DOI_RE)) {
     if (/^https?:/i.test(m[0])) {
       const clean = tidyUrl(m[0].split(CJK_CUT)[0]).replace(/[.,;:，。、]+$/, '');
-      if (!clean || seen.has(clean) || seenLc.has(clean.toLowerCase()) || /mp\.weixin\.qq\.com/i.test(clean)) continue;
+      if (!clean || seen.has(clean) || seenLc.has(clean.toLowerCase()) || /mp\.weixin\.qq\.com/i.test(clean) || isXhsUrl(clean)) continue;
       if (!isPaperUrl(clean)) {
         // 非白名单域名只有贴在提示词后面才采纳；看 URL 前 24 个字符
         if (!CUE_TAIL_RE.test(t.slice(Math.max(0, m.index - 24), m.index))) continue;
@@ -101,6 +114,28 @@ function paperUrls(text) {
 
 function firstPaperUrl(text) {
   return paperUrls(text)[0] || null;
+}
+
+// 小红书链接（分享短链 xhslink.com / 站内长链 xiaohongshu.com/explore|discovery）。
+// 清洗与 paperUrls 的 URL 分支同套（CJK 截断、括号配平、去尾标点、去重）；
+// 只认带 http(s):// 的写法（与全应用提取规则一致）
+function xhsUrls(text) {
+  const t = String(text || '');
+  const out = [];
+  const seen = new Set();
+  for (const m of t.matchAll(MSG_URL_OR_DOI_RE)) {
+    if (!/^https?:/i.test(m[0])) continue;
+    const clean = tidyUrl(m[0].split(CJK_CUT)[0]).replace(/[.,;:，。、]+$/, '');
+    if (!clean || seen.has(clean) || seen.has(clean.toLowerCase()) || !isXhsUrl(clean)) continue;
+    seen.add(clean);
+    seen.add(clean.toLowerCase());
+    out.push(clean);
+  }
+  return out;
+}
+
+function firstXhsUrl(text) {
+  return xhsUrls(text)[0] || null;
 }
 
 async function fetchArticle(url, bodyChars = 3000) {
@@ -194,4 +229,4 @@ function parse(h, url, bodyChars) {
   return a;
 }
 
-module.exports = { FetchError, fetchArticle, firstWechatUrl, firstPaperUrl, paperUrls, isPaperUrl, PAPER_HOSTS };
+module.exports = { FetchError, fetchArticle, firstWechatUrl, firstPaperUrl, paperUrls, isPaperUrl, isXhsUrl, firstXhsUrl, xhsUrls, PAPER_HOSTS, XHS_HOSTS };

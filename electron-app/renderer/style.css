@@ -124,6 +124,19 @@ body {
 .pill.ignored { color: var(--sub); background: var(--gray-soft); }
 .pill.pending_write { color: var(--orange); background: var(--orange-soft); }
 .pill.new { color: var(--accent); background: var(--accent-soft); }
+.pill.captured { color: var(--orange); background: var(--orange-soft); }
+
+/* 记录筛选条（V1.3）：类型 + 状态两个下拉，贴在工具栏与列表之间 */
+.filters {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 18px 10px;
+}
+.filters select {
+  font-family: inherit; font-size: 12.5px; color: var(--txt);
+  background: var(--card); border: 1px solid var(--line); border-radius: 9px;
+  padding: 5px 8px; cursor: pointer; outline: none;
+}
+.filters select:hover { border-color: #d5dcfb; }
 
 .empty {
   text-align: center; color: var(--sub); padding: 60px 20px; font-size: 13.5px; line-height: 1.9;

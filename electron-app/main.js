@@ -27,6 +27,13 @@ function mainLog(msg) {
   } catch {}
 }
 
+// 开发态与打包版 productName 同名，会共用 %APPDATA%\zotero_sdai_collector——而 GPU 磁盘缓存、
+// 单实例锁都按 userData 划界：两者同时跑会互相锁缓存文件（启动报 "Unable to create cache"）、
+// 单实例锁互踢（正式版被弹退"未取得单实例锁"）。开发态改用独立 userData 目录，从此互不干扰
+if (!app.isPackaged) {
+  try { app.setPath('userData', path.join(app.getPath('appData'), 'zotero_sdai_collector-dev')); } catch {}
+}
+
 if (!app.requestSingleInstanceLock()) {
   mainLog('未取得单实例锁，退出（已有实例在运行）');
   app.quit();
@@ -324,12 +331,19 @@ function startClipboardPolling() {
       .then((text) => {
         if (!text || text === lastClip) return;
         lastClip = text;
-        // 微信链接 + 论文链接一起粘：论文链接随 enqueueUrl 传入配对，不再只取第一条
+        // 微信链接 + 论文链接一起粘：论文链接随 enqueueUrl 传入配对，不再只取第一条；
+        // 小红书链接（V1.3）不入库，单独捕获（面板/卡片一键浏览器打开）
         const wechat = extract.firstWechatUrl(text);
-        const papers = extract.paperUrls(text).filter((u) => u !== wechat);
+        const xhs = extract.firstXhsUrl(text);
+        const papers = extract.paperUrls(text).filter((u) => u !== wechat && u !== xhs);
         if (wechat) {
-          engine.log(`捕获链接：${wechat}${papers.length ? ` + 论文链接 ${papers.length} 条` : ''}`);
+          engine.log(`捕获链接：${wechat}${papers.length ? ` + 论文链接 ${papers.length} 条` : ''}${xhs ? ' + 小红书链接' : ''}`);
           engine.enqueueUrl(wechat, [], papers);
+          if (xhs) engine.enqueueUrl(xhs);
+        } else if (xhs) {
+          engine.log(`捕获小红书链接：${xhs}${papers.length ? ` + 论文链接 ${papers.length} 条` : ''}`);
+          engine.enqueueUrl(xhs);
+          for (const pu of papers) engine.enqueueUrl(pu);
         } else {
           for (const pu of papers) {
             engine.log(`捕获论文链接：${pu}`);
@@ -352,6 +366,7 @@ ipcMain.handle('refresh-collections', async () => {
   return { n, authorized: zotero.hasKey() };
 });
 ipcMain.handle('reconfirm', () => engine.reconfirmPending());
+ipcMain.handle('resend-event', (_e, id) => engine.resendEvent(id));
 ipcMain.handle('clear-history', () => {
   store.clearEvents();
   broadcast();

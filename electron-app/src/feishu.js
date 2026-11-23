@@ -55,15 +55,19 @@ function start(appId, appSecret, onUrl) {
           const m = (data && data.message) || {};
           const raw = typeof m.content === 'string' ? m.content : '';
           // 链接从整个消息内容里找：text/post(富文本)/卡片消息都可能是链接载体；
-          // 微信链接 + 论文链接一起发时全部提取，论文链接交给引擎配对
+          // 微信链接 + 论文链接一起发时全部提取，论文链接交给引擎配对；
+          // 小红书链接（V1.3）不入库，仅捕获后在桌面端一键打开——没有微信主链接时可当主链接转发
           const wechat = extract.firstWechatUrl(raw);
-          const papers = extract.paperUrls(raw).filter((u) => u !== wechat);
-          const url = wechat || papers[0] || null;
+          const xhs = extract.firstXhsUrl(raw);
+          const papers = extract.paperUrls(raw).filter((u) => u !== wechat && u !== xhs);
+          const url = wechat || papers[0] || xhs || null;
           const hints = parseHintPaths(raw, url);
-          log(`收到消息 type=${m.message_type} url=${url ? '✓' : '×'} 论文链接=${papers.length} hint=${hints.join('|') || '-'} raw=${raw.slice(0, 90)}`);
+          log(`收到消息 type=${m.message_type} url=${url ? '✓' : '×'} 论文链接=${papers.length} xhs=${xhs ? '✓' : '×'} hint=${hints.join('|') || '-'} raw=${raw.slice(0, 90)}`);
           if (url && m.chat_id) {
             lastChat = { url, chatId: m.chat_id };
             onUrlCb && onUrlCb(url, hints, wechat ? papers : papers.slice(1));
+            // 文章/xhs 做主链接之外还带了一条小红书链接时，单独补一次转发，不让它静默丢失
+            if (xhs && xhs !== url && onUrlCb) onUrlCb(xhs, [], []);
             // 轻量回执，让手机侧知道已收到（写了指定分类也回显，便于确认解析没跑偏）
             try {
               const tail = hints.length ? `\n已按指定分类处理：${hints.join('、')}` : '';
@@ -79,7 +83,7 @@ function start(appId, appSecret, onUrl) {
             try {
               await api.im.message.create({
                 params: { receive_id_type: 'chat_id' },
-                data: { receive_id: m.chat_id, content: JSON.stringify({ text: '没有识别出可处理的链接。本机器人支持公众号文章链接和论文直链（arXiv / doi.org / 期刊页 / OUP 等）' }), msg_type: 'text' },
+                data: { receive_id: m.chat_id, content: JSON.stringify({ text: '没有识别出可处理的链接。本机器人支持公众号文章链接、论文直链（arXiv / doi.org / 期刊页 / OUP 等）和小红书笔记链接（需自带 http(s):// 协议）' }), msg_type: 'text' },
               });
             } catch (e) {
               log(`回执发送失败：${e.message}`);

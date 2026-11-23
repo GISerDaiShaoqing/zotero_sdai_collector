@@ -29,6 +29,22 @@
     <span class="hint">日常用法：在微信里复制公众号文章链接，其余全自动</span>
   </div>
 
+  <div class="filters">
+    <select id="filterKind" title="按类型筛选">
+      <option value="all">全部类型</option>
+      <option value="wechat">公众号文章</option>
+      <option value="paper">论文</option>
+      <option value="xhs">小红书</option>
+    </select>
+    <select id="filterStatus" title="按状态筛选">
+      <option value="all">全部状态</option>
+      <option value="active">处理中/待确认</option>
+      <option value="saved">已存入</option>
+      <option value="failed">失败</option>
+      <option value="ignored">已忽略</option>
+    </select>
+  </div>
+
   <main class="list" id="list"></main>
 
   <div class="modal-mask hidden" id="settingsMask">

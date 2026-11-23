@@ -10,7 +10,7 @@
     "type": "git",
     "url": "https://github.com/GISerDaiShaoqing/zotero_sdai_collector.git"
   },
-  "version": "1.2.11",
+  "version": "1.3.0",
   "private": true,
   "main": "main.js",
   "scripts": {
