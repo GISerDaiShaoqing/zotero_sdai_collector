@@ -24,7 +24,12 @@ body.with-bg .card { background: rgba(35, 41, 54, 0.45); }
   background: var(--card); border: 1px solid var(--line); border-radius: 10px;
   padding: 9px 12px; margin-bottom: 6px;
   animation: slidein .18s ease-out;
+  /* 整卡可拖：按住任意空白处即可拖走（无边框窗的移动手段，同悬浮球）；
+     卡片文本本就短小无需划选，点击类交互全部在下面 no-drag 的元素上 */
+  -webkit-app-region: drag; cursor: move;
 }
+/* 可点元素恢复可点：拖动区内的子元素默认被系统拖动吞掉点击 */
+.chip, .b, .openlink { -webkit-app-region: no-drag; }
 .card:last-child { margin-bottom: 0; }
 @keyframes slidein { from { opacity: 0; transform: translateY(8px); } }
 .head { display: flex; align-items: flex-start; gap: 8px; }

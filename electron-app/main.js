@@ -8,6 +8,7 @@ const store = require('./src/store');
 const engine = require('./src/engine');
 const zotero = require('./src/zotero');
 const extract = require('./src/extract');
+const feishu = require('./src/feishu');
 
 let panel = null;
 let hud = null;
@@ -127,6 +128,33 @@ function hudBounds(h) {
   return { x: wa.x + wa.width - HUD_W - HUD_MARGIN, y: wa.y + wa.height - h - HUD_MARGIN, width: HUD_W, height: h };
 }
 
+// 卡片窗可拖动（hud.css 的 -webkit-app-region）：默认贴右下角，用户拖走后，
+// 本次运行内新卡都停在拖到的位置（不再飞回右下角），重启应用归位。
+// 区分"用户拖动"与"程序归位"：程序归位后位置必等于锚点，'moved' 时不等即用户拖的
+let hudAnchor = null;
+let hudMoved = false;
+
+// 内容高度变化统一走这里：未拖动贴右下角；拖过后保持左上角只随内容伸缩，
+// 并夹回工作区（防拖到屏幕边缘后新卡把窗口伸进看不见的地方）
+function placeHud(h) {
+  if (!hud || hud.isDestroyed()) return;
+  const height = Math.max(80, Math.min(520, Math.round(Number(h) || 96)));
+  let b;
+  if (hudMoved) {
+    const [x, y] = hud.getPosition();
+    const wa = screen.getDisplayMatching({ x, y, width: HUD_W, height }).workArea;
+    b = {
+      x: Math.min(Math.max(x, wa.x), Math.max(wa.x, wa.x + wa.width - HUD_W)),
+      y: Math.min(Math.max(y, wa.y), Math.max(wa.y, wa.y + wa.height - height)),
+      width: HUD_W, height,
+    };
+  } else {
+    b = hudBounds(height);
+  }
+  hudAnchor = { x: b.x, y: b.y };
+  hud.setBounds(b);
+}
+
 function createHud() {
   hud = new BrowserWindow({
     width: HUD_W, height: 96,
@@ -136,6 +164,13 @@ function createHud() {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   });
   hud.setAlwaysOnTop(true, 'screen-saver');
+  // 记下初始锚点 + 监听用户拖动（拖动由 CSS app-region 完成，这里只负责记住"拖过了"）
+  hudAnchor = (() => { const b = hud.getBounds(); return { x: b.x, y: b.y }; })();
+  hud.on('moved', () => {
+    if (!hudAnchor) return;
+    const [x, y] = hud.getPosition();
+    if (x !== hudAnchor.x || y !== hudAnchor.y) hudMoved = true;
+  });
   // 启动或恢复后：把仍在等待确认的卡片自动重新弹出（状态已落盘；不重弹用户无从知晓）
   hud.webContents.on('did-finish-load', () => {
     sendHudBg();
@@ -157,7 +192,7 @@ function createHud() {
 
 // 弹卡前先把窗口归位到最小尺寸，内容渲染后再自适应，避免沿用上次的大窗口
 function resetHudSize() {
-  if (hud && !hud.isDestroyed()) hud.setBounds(hudBounds(96));
+  placeHud(96);
 }
 
 // ---- 悬浮小球 ----
@@ -336,19 +371,24 @@ function startClipboardPolling() {
         const wechat = extract.firstWechatUrl(text);
         const xhs = extract.firstXhsUrl(text);
         const papers = extract.paperUrls(text).filter((u) => u !== wechat && u !== xhs);
+        // 指定分类在剪贴板入口同样生效（此前只有飞书入口解析提示词，桌面复制"链接 进 xxx"
+        // 会被静默丢进常规流程）；主链接 = 文章或第一条论文链接，其余附带论文不带指定，与飞书一致
+        const mainUrl = wechat || papers[0] || '';
+        const hints = mainUrl ? feishu.parseHintPaths(JSON.stringify({ text }), mainUrl) : [];
+        const hintTag = hints.length ? `（指定：${hints.join('、')}）` : '';
         if (wechat) {
-          engine.log(`捕获链接：${wechat}${papers.length ? ` + 论文链接 ${papers.length} 条` : ''}${xhs ? ' + 小红书链接' : ''}`);
-          engine.enqueueUrl(wechat, [], papers);
+          engine.log(`捕获链接：${wechat}${papers.length ? ` + 论文链接 ${papers.length} 条` : ''}${xhs ? ' + 小红书链接' : ''}${hintTag}`);
+          engine.enqueueUrl(wechat, hints, papers);
           if (xhs) engine.enqueueUrl(xhs);
         } else if (xhs) {
           engine.log(`捕获小红书链接：${xhs}${papers.length ? ` + 论文链接 ${papers.length} 条` : ''}`);
           engine.enqueueUrl(xhs);
           for (const pu of papers) engine.enqueueUrl(pu);
         } else {
-          for (const pu of papers) {
-            engine.log(`捕获论文链接：${pu}`);
-            engine.enqueueUrl(pu);
-          }
+          papers.forEach((pu, i) => {
+            engine.log(`捕获论文链接：${pu}${i === 0 ? hintTag : ''}`);
+            engine.enqueueUrl(pu, i === 0 ? hints : []);
+          });
         }
       })
       .catch((e) => engine.log(`剪贴板读取异常：${e.message}`));
@@ -416,11 +456,9 @@ ipcMain.handle('ball-menu', () => {
     { label: '退出', click: () => { quitting = true; app.quit(); } },
   ]).popup({ window: ball });
 });
-// 渲染进程报内容高度 → 夹取后按右下角重新贴靠
+// 渲染进程报内容高度 → 统一贴靠（未拖动贴右下角；拖过则原地随内容伸缩）
 ipcMain.on('hud-resize', (e, h) => {
-  if (!hud || hud.isDestroyed()) return;
-  const height = Math.max(80, Math.min(520, Math.round(Number(h) || 96)));
-  hud.setBounds(hudBounds(height));
+  placeHud(h);
 });
 ipcMain.handle('pick-bg', async () => {
   const r = await dialog.showOpenDialog(panel, {
