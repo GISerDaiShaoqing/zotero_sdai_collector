@@ -692,13 +692,28 @@ class Engine extends EventEmitter {
     if (!meta || !meta.title) {
       const blocked = /cell\.com|sciencedirect\.com/i.test(url);
       const msg = blocked
-        ? '该出版商（Cell/Elsevier 系）反爬封锁，无法自动识别——请从文章页复制 DOI 直链（doi.org/…）再发一次'
+        ? '该出版商（Cell/Elsevier 系）反爬封锁，无法自动识别'
         : '识别不到论文元数据（页面被反爬、链接无效，或刚刊出尚未被文献库收录）';
       this.log(`论文元数据失败：${url}`);
-      store.updateEvent(ev.id, { status: 'failed', error: msg });
-      this.hud({ type: 'result', ok: false, title: '元数据获取失败', detail: msg.slice(0, 70), url });
-      // 飞书来源的识别失败手机侧补一条带原链接的回执（此前完全无感知）
-      feishu.notifyFor(url, `⚠️ 论文识别失败：${url}\n页面多半被出版商反爬挡住——点开链接人工核对，或改发 doi.org/<DOI> 直链重试`);
+      // 与文章抓取失败同权：转"仅链接可存"确认卡——先把占位条目存进 Zotero，标题/元数据后补；
+      // 手机侧回执之外再单独转发一条纯链接（手机端一步点开、长按即可复制/转发）
+      const hint = this._resolveHints(hints);
+      const paths = hint.resolved.map((c) => c.path);
+      store.updateEvent(ev.id, {
+        status: 'pending', paths,
+        keys: hint.resolved.map((c) => c.key),
+        payload: JSON.stringify({
+          article: null, meta: null,
+          classification: paths.length ? { paths, keys: hint.resolved.map((c) => c.key), confidence: 1, isPaper: true, paperTitleGuess: '', note: 'hint' } : null,
+        }),
+      });
+      this.hud({
+        type: 'confirm', id: ev.id, title: '（论文识别失败 · 仅链接可存）', blogTitle: '', date: '', url,
+        paths,
+        reason: `${msg} ｜ 确认=存仅链接占位条目（标题自己补），忽略=丢弃`,
+      });
+      feishu.notifyFor(url, `⚠️ 论文识别失败：${url}\n${msg}——桌面端已弹"仅链接"确认卡可直接存占位，或找到 DOI 后改发 doi.org/<DOI> 直链重试`);
+      feishu.notifyFor(url, url);
       this._broadcast();
       return;
     }
@@ -992,7 +1007,8 @@ class Engine extends EventEmitter {
         : [];
       const emptyArticle = { url: row.url, title: '', blogTitle: '', publishDate: '', abstract: '', body: '', paperLinks: [], arxivIds: [], dois: [] };
       const emptyCls = { paths: chosenPaths && chosenPaths.length ? chosenPaths : [], keys, confidence: 0, isPaper: false, paperTitleGuess: '' };
-      const item = { itemType: 'blogPost', title: row.url, url: row.url, collections: keys };
+      // 占位条目类型随事件种类：微信文章=blogPost，论文直链=journalArticle（标题/字段用户在 Zotero 补全）
+      const item = { itemType: paperOnly ? 'journalArticle' : 'blogPost', title: row.url, url: row.url, collections: keys };
       try {
         const itemKeys = await zotero.createItems([item]);
         store.updateEvent(id, { status: 'saved', itemKeys, paths: emptyCls.paths, keys });

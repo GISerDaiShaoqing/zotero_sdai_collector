@@ -278,7 +278,24 @@ async function doiMeta(doi) {
   return m;
 }
 
-// 直接论文链接的入口：arXiv → DOI → 出版商页面 citation meta
+// Elsevier 系反爬页（cell.com / sciencedirect / thelancet 等）URL 不含 DOI，但路径里的
+// PII 条目号（如 S2211-1247(26)01318-5）可在 Crossref 反查换出 DOI——
+// Crossref 存的是去标点全拼形态（S2211124726013185，见 work 记录的 alternative-id 字段）
+async function doiFromElsevierPii(url) {
+  const m = String(url || '').match(/\/(?:fulltext|pii)\/(S[A-Za-z0-9()\-]+)/i);
+  if (!m) return '';
+  const stripped = m[1].replace(/[^A-Za-z0-9]/g, '');
+  if (stripped.length < 12) return '';
+  try {
+    const r = await _get('https://api.crossref.org/works', { filter: 'alternative-id:' + stripped, rows: '3', select: 'DOI' });
+    if (!r) return '';
+    const j = await r.json();
+    const items = (j.message || {}).items || [];
+    return (items[0] && items[0].DOI) || '';
+  } catch { return ''; }
+}
+
+// 直接论文链接的入口：arXiv → DOI → Elsevier PII 反查 → 出版商页面 citation meta
 async function lookupByUrl(url) {
   const aid = arxivIdFromUrl(url);
   if (aid) {
@@ -289,7 +306,13 @@ async function lookupByUrl(url) {
     const m = await doiMeta(doi);
     if (m) return m;
   }
-  // URL 里的 DOI 候选都查不到（或没有）→ 回落出版商页面 citation meta
+  // URL 里的 DOI 候选都查不到（或没有）→ Elsevier 系反爬页按路径里的 PII 反查换 DOI 再试
+  const piiDoi = await doiFromElsevierPii(url);
+  if (piiDoi) {
+    const m = await doiMeta(piiDoi);
+    if (m) return m;
+  }
+  // → 回落出版商页面 citation meta
   const pm = await pageCitationMeta(url);
   if (pm && pm.title) {
     if (pm.doi) {
